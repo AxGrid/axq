@@ -19,6 +19,10 @@ func main() {
         WithDB(db).
         // MaxBlobSize specify max messages in blob (default 10000)
         WithMaxBlobSize(10000).
+        // ChunkSize specify how much messages in chunk (default 1000)
+        WithChunkSize(1000). 
+        // WithoutCompression specify if you not want to compress your
+        WithoutCompression().
         Build()
     if err != nil {
         panic(err)

@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/rs/zerolog/log"
@@ -15,20 +14,31 @@ import (
 )
 
 func TestNewB2ReaderService(t *testing.T) {
-
 	ctx := context.Background()
 	opts := domain.B2ReaderOptions{
+		B2: domain.B2Options{
+			Endpoint: b2Endpoint,
+			Credentials: backblaze.Credentials{
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
+			},
+			Salt: "test_salt",
+		},
+		DB: domain.DataBaseOptions{
+			DB: testDataBase,
+		},
 		BaseOptions: domain.BaseOptions{
 			Name:   "test",
 			Logger: log.Logger,
 			CTX:    ctx,
 		},
-		ReaderName: "b2_reader",
+		ReaderName:  "b2_reader",
+		LoaderCount: 2,
+		OuterCount:  2,
 	}
-
 	r, err := NewB2ReaderService(opts)
 	assert.Nil(t, err)
-	fmt.Println(r)
+	assert.NotNil(t, r)
 }
 
 func TestB2ReaderService_sorter(t *testing.T) {
@@ -41,13 +51,19 @@ func TestB2ReaderService_sorter(t *testing.T) {
 				KeyID:          b2KeyId,
 				ApplicationKey: b2AppKey,
 			},
+			Salt: "test_salt",
+		},
+		DB: domain.DataBaseOptions{
+			DB: testDataBase,
 		},
 		BaseOptions: domain.BaseOptions{
 			Name:   "test",
 			Logger: log.Logger,
 			CTX:    ctx,
 		},
-		ReaderName: "b2_reader",
+		ReaderName:  "b2_reader",
+		LoaderCount: 2,
+		OuterCount:  2,
 	}
 
 	r, err := NewB2ReaderService(opts)
@@ -90,7 +106,7 @@ func TestB2ReaderService_sorter(t *testing.T) {
 	<-time.NewTimer(15 * time.Second).C
 }
 
-func BenchmarkB2ReaderService_loader(b *testing.B) {
+func TestB2ReaderService_loader(t *testing.T) {
 	ctx := context.Background()
 	opts := domain.B2ReaderOptions{
 		B2: domain.B2Options{
@@ -99,46 +115,10 @@ func BenchmarkB2ReaderService_loader(b *testing.B) {
 				KeyID:          b2KeyId,
 				ApplicationKey: b2AppKey,
 			},
+			Salt: "test_salt",
 		},
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		ReaderName: "b2_reader",
-	}
-
-	r, err := NewB2ReaderService(opts)
-	r.blobListChan = make(chan *protobuf.BlobMessageList, 1000)
-	assert.Nil(b, err)
-	<-time.NewTimer(5 * time.Second).C
-	var first uint64 = 1
-	count := 0
-	for {
-		select {
-		case <-time.NewTimer(5 * time.Second).C:
-			break
-		default:
-			if err := r.load(0); err != nil {
-				atomic.SwapUint64(&r.b2Fid, first)
-				continue
-			}
-			count++
-		}
-		break
-	}
-}
-
-func BenchmarkB2ReaderService(b *testing.B) {
-	ctx := context.Background()
-	loaders := 30
-	opts := domain.B2ReaderOptions{
-		B2: domain.B2Options{
-			Endpoint: b2Endpoint,
-			Credentials: backblaze.Credentials{
-				KeyID:          b2KeyId,
-				ApplicationKey: b2AppKey,
-			},
+		DB: domain.DataBaseOptions{
+			DB: testDataBase,
 		},
 		BaseOptions: domain.BaseOptions{
 			Name:   "test",
@@ -146,14 +126,49 @@ func BenchmarkB2ReaderService(b *testing.B) {
 			CTX:    ctx,
 		},
 		ReaderName:  "b2_reader",
-		BufferSize:  1_000_000,
-		LoaderCount: loaders,
-		OuterCount:  loaders * 2,
+		LoaderCount: 2,
+		OuterCount:  2,
 	}
 
 	r, err := NewB2ReaderService(opts)
-	assert.Nil(b, err)
+	assert.Nil(t, err)
+	assert.NotNil(t, r)
+	r.blobListChan = make(chan *protobuf.BlobMessageList, 1000)
+	ctxt, _ := context.WithTimeout(ctx, 10*time.Second)
+	go func() {
+		for {
+			m := r.Pop()
+			m.Done()
+		}
+	}()
+	<-ctxt.Done()
+}
 
+func TestB2ReaderService_Benchmark(t *testing.T) {
+	ctx := context.Background()
+	opts := domain.B2ReaderOptions{
+		B2: domain.B2Options{
+			Endpoint: b2Endpoint,
+			Credentials: backblaze.Credentials{
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
+			},
+			Salt: "test_salt",
+		},
+		DB: domain.DataBaseOptions{
+			DB: testDataBase,
+		},
+		BaseOptions: domain.BaseOptions{
+			Name:   "test",
+			Logger: log.Logger,
+			CTX:    ctx,
+		},
+		ReaderName:  "b2_reader",
+		LoaderCount: 2,
+		OuterCount:  2,
+	}
+	r, err := NewB2ReaderService(opts)
+	assert.Nil(t, err)
 	count := uint64(0)
 	timeout := 60
 	ctxt, _ := context.WithTimeout(context.Background(), time.Second*time.Duration(timeout))
@@ -169,8 +184,7 @@ func BenchmarkB2ReaderService(b *testing.B) {
 			}
 		}
 	}()
-
-	for i := 0; i < loaders; i++ {
+	for i := 0; i < 4; i++ {
 		go func() {
 			for {
 				m := r.Pop()
@@ -179,6 +193,5 @@ func BenchmarkB2ReaderService(b *testing.B) {
 			}
 		}()
 	}
-
 	<-ctxt.Done()
 }

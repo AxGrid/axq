@@ -82,6 +82,11 @@ func (b *WriterBuilder) WithMaxBlobSize(size int) *WriterBuilder {
 	return b
 }
 
+func (b *WriterBuilder) WithChunkSize(size int) *WriterBuilder {
+	b.opts.ChunkSize = size
+	return b
+}
+
 func (b *WriterBuilder) Build() (domain.Writer, error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)

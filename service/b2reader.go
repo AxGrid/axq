@@ -47,6 +47,7 @@ func NewB2ReaderService(opts domain.B2ReaderOptions) (*B2ReaderService, error) {
 		blobListChan: make(chan *protobuf.BlobMessageList, opts.LoaderCount*2),
 		bufferChan:   make(chan *protobuf.BlobMessage, opts.BufferSize),
 		outChan:      make(chan domain.Message, opts.OuterCount),
+		db:           opts.DB.DB,
 	}
 
 	if opts.B2.Salt != "" {
@@ -132,7 +133,13 @@ func (r *B2ReaderService) load(index int) error {
 			continue
 		}
 		wlog.Info().Int64("download took ms", time.Since(downloadStart).Milliseconds()).Uint64("fid", fid).Str("filename", filename).Msg("successfully downloaded file")
-		switch r.opts.B2.Compression.Encryption {
+		var blob protobuf.Blob
+		err = proto.Unmarshal(content, &blob)
+		if err != nil {
+			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob error")
+			continue
+		}
+		switch blob.Encryption {
 		case domain.BLOB_ENCRYPTION_AES:
 			content, err = r.dbAes.Decrypt(content)
 			if err != nil {
@@ -140,8 +147,7 @@ func (r *B2ReaderService) load(index int) error {
 				continue
 			}
 		}
-
-		switch r.opts.B2.Compression.Compression {
+		switch blob.Compression {
 		case domain.BLOB_COMPRESSION_GZIP:
 			content, err = utils.GUnzipData(content)
 			if err != nil {
@@ -149,13 +155,6 @@ func (r *B2ReaderService) load(index int) error {
 				continue
 			}
 		}
-		var blob protobuf.Blob
-		err = proto.Unmarshal(content, &blob)
-		if err != nil {
-			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob error")
-			continue
-		}
-
 		var list protobuf.BlobMessageList
 		err = proto.Unmarshal(blob.Messages, &list)
 		if err != nil {

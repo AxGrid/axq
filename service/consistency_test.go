@@ -1,20 +1,16 @@
 package service
 
 import (
-	ansible_queries "axgrid/shared/ansible-queries"
-	"axgrid/shared/axtools"
-	"axgrid/shared/unigorm"
-	"axgrid/target/generated-sources/proto/axq"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/axgrid/axq/domain"
+	"github.com/axgrid/axq/protobuf"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -22,17 +18,12 @@ import (
 	"time"
 )
 
-var (
-	localDB = unigorm.NewUniGorm().WithLogger(log.Logger).WithDBName("axq").WithDialectString("mysql").WithHost("127.0.0.1").WithParseTime(true).WithGormLogLevel(logger.Warn)
-	axqDB   = unigorm.NewUniGorm().WithParseTime(true).WithDialectString("mysql").WithGormLogLevel(logger.Error).WithLogger(log.Logger).WithHost(ansible_queries.GetHostAddress("axq")).WithDBName("axq").WithIgnoreRecordNotFoundError(true).ShouldConnect().DB
-)
-
 func TestWriterService_consistency(t *testing.T) {
 	count := 500000
-	db := localDB.WithLogger(log.Logger).ShouldConnect().DB
+	db := testDataBase
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{
-			Name:   "test_partition",
+			Name:   "test",
 			Logger: log.Logger,
 			CTX:    context.Background(),
 		},
@@ -85,7 +76,7 @@ func TestWriterService_consistency(t *testing.T) {
 
 func TestReaderService_consistency_2_waiter_1_outer(t *testing.T) {
 	waiters := 2
-	axtools.InitLogger("debug")
+	db := testDataBase
 	ctx := context.Background()
 	readerOpts := domain.ReaderOptions{
 		BaseOptions: domain.BaseOptions{
@@ -94,10 +85,10 @@ func TestReaderService_consistency_2_waiter_1_outer(t *testing.T) {
 			CTX:    ctx,
 		},
 		DB: domain.DataBaseOptions{
-			DB: axqDB,
+			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -121,9 +112,9 @@ func TestReaderService_consistency_2_waiter_1_outer(t *testing.T) {
 			msg := make([]byte, 8)
 			binary.LittleEndian.PutUint64(msg, uint64(index))
 
-			list := &axq.BlobMessageList{
+			list := &protobuf.BlobMessageList{
 				Fid: curFid,
-				Messages: []*axq.BlobMessage{
+				Messages: []*protobuf.BlobMessage{
 					{
 						Id:      curFid,
 						Fid:     curFid,
@@ -158,7 +149,6 @@ func TestReaderService_consistency_2_waiter_1_outer(t *testing.T) {
 }
 
 func TestReaderService_consistency_10_waiter_5_outer(t *testing.T) {
-	axtools.InitLogger("info")
 	ctx := context.Background()
 	waiter := 10
 	outer := 5
@@ -169,10 +159,10 @@ func TestReaderService_consistency_10_waiter_5_outer(t *testing.T) {
 			CTX:    ctx,
 		},
 		DB: domain.DataBaseOptions{
-			DB: axqDB,
+			DB: testDataBase,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -196,9 +186,9 @@ func TestReaderService_consistency_10_waiter_5_outer(t *testing.T) {
 			msg := make([]byte, 8)
 			binary.LittleEndian.PutUint64(msg, uint64(index))
 
-			list := &axq.BlobMessageList{
+			list := &protobuf.BlobMessageList{
 				Fid: curFid,
-				Messages: []*axq.BlobMessage{
+				Messages: []*protobuf.BlobMessage{
 					{
 						Id:      curFid,
 						Fid:     curFid,
@@ -237,7 +227,6 @@ func TestReaderService_consistency_10_waiter_5_outer(t *testing.T) {
 }
 
 func TestReaderService_consistency_5_waiter_10_outer(t *testing.T) {
-	axtools.InitLogger("debug")
 	ctx := context.Background()
 	waiter := 5
 	outer := 10
@@ -248,10 +237,10 @@ func TestReaderService_consistency_5_waiter_10_outer(t *testing.T) {
 			CTX:    ctx,
 		},
 		DB: domain.DataBaseOptions{
-			DB: axqDB,
+			DB: testDataBase,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -275,9 +264,9 @@ func TestReaderService_consistency_5_waiter_10_outer(t *testing.T) {
 			msg := make([]byte, 8)
 			binary.LittleEndian.PutUint64(msg, uint64(index))
 
-			list := &axq.BlobMessageList{
+			list := &protobuf.BlobMessageList{
 				Fid: curFid,
-				Messages: []*axq.BlobMessage{
+				Messages: []*protobuf.BlobMessage{
 					{
 						Id:      curFid,
 						Fid:     curFid,
@@ -315,15 +304,14 @@ func TestReaderService_consistency_5_waiter_10_outer(t *testing.T) {
 }
 
 func TestB2ReaderService_consistency_2_loader_1_outer(t *testing.T) {
-	axtools.InitLogger("debug")
 	ctx := context.Background()
 	loaders := 2
 	opts := domain.B2ReaderOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 			Salt: "test_salt",
 		},
@@ -363,16 +351,15 @@ func TestB2ReaderService_consistency_2_loader_1_outer(t *testing.T) {
 }
 
 func TestB2ReaderService_consistency_5_loader_10_outer(t *testing.T) {
-	axtools.InitLogger("debug")
 	ctx := context.Background()
 	loaders := 5
 	outers := 10
 	opts := domain.B2ReaderOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 		},
 		BaseOptions: domain.BaseOptions{
@@ -413,16 +400,15 @@ func TestB2ReaderService_consistency_5_loader_10_outer(t *testing.T) {
 }
 
 func TestB2ReaderService_consistency_10_loader_5_outer(t *testing.T) {
-	axtools.InitLogger("debug")
 	ctx := context.Background()
 	loaders := 10
 	outers := 5
 	opts := domain.B2ReaderOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 		},
 		BaseOptions: domain.BaseOptions{
@@ -464,7 +450,6 @@ func TestB2ReaderService_consistency_10_loader_5_outer(t *testing.T) {
 
 func TestReaderService_consistency_rand_errors(t *testing.T) {
 	waiters := 2
-	axtools.InitLogger("debug")
 	ctx := context.Background()
 	readerOpts := domain.ReaderOptions{
 		BaseOptions: domain.BaseOptions{
@@ -473,10 +458,10 @@ func TestReaderService_consistency_rand_errors(t *testing.T) {
 			CTX:    ctx,
 		},
 		DB: domain.DataBaseOptions{
-			DB: axqDB,
+			DB: testDataBase,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -501,9 +486,9 @@ func TestReaderService_consistency_rand_errors(t *testing.T) {
 			msg := make([]byte, 8)
 			binary.LittleEndian.PutUint64(msg, uint64(index))
 
-			list := &axq.BlobMessageList{
+			list := &protobuf.BlobMessageList{
 				Fid: curFid,
-				Messages: []*axq.BlobMessage{
+				Messages: []*protobuf.BlobMessage{
 					{
 						Id:      curFid,
 						Fid:     curFid,
@@ -546,14 +531,13 @@ func TestReaderService_consistency_rand_errors(t *testing.T) {
 }
 
 func TestArchiverService_overlap(t *testing.T) {
-	axtools.InitLogger("debug")
 	var lastB2fid uint64 = 6
 	s, err := NewArchiverService(domain.ArchiverOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 		},
 		BaseOptions: domain.BaseOptions{
@@ -562,10 +546,10 @@ func TestArchiverService_overlap(t *testing.T) {
 			CTX:    context.Background(),
 		},
 		DB: domain.DataBaseOptions{
-			DB: unigorm.NewUniGorm().WithParseTime(true).WithDialectString("mysql").WithGormLogLevel(logger.Error).WithLogger(log.Logger).WithHost(ansible_queries.GetHostAddress("axq")).WithDBName("axq").WithIgnoreRecordNotFoundError(true).ShouldConnect().DB,
+			DB: testDataBase,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -586,10 +570,10 @@ func TestArchiverService_overlap(t *testing.T) {
 			CTX:    context.Background(),
 		},
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 		},
 		LoaderCount: 1,
@@ -605,20 +589,19 @@ func TestArchiverService_overlap(t *testing.T) {
 }
 
 func TestWriterAndArchiver_write(t *testing.T) {
-	axtools.InitLogger("debug")
-	db := unigorm.NewUniGorm().WithDBName("axq").WithDialectString("mysql").WithHost("127.0.0.1").WithParseTime(true).WithGormLogLevel(logger.Warn).ShouldConnect().DB //unigorm.NewUniGorm().WithParseTime(true).WithDialectString("mysql").WithGormLogLevel(logger.Warn).WithHost(ansible_queries.GetHostAddress("axq")).WithDBName("axq").WithIgnoreRecordNotFoundError(true).ShouldConnect().DB
+	db := testDataBase
 	lines := 1000000
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{
-			Name:   "lima-test",
+			Name:   "test",
 			Logger: log.Logger,
 			CTX:    context.Background(),
 		},
 		DB: domain.DataBaseOptions{
 			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -645,13 +628,12 @@ func TestWriterAndArchiver_write(t *testing.T) {
 	}
 	wg.Wait()
 
-	axtools.InitLogger("debug")
 	_, err = NewArchiverService(domain.ArchiverOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 		},
 		BaseOptions: domain.BaseOptions{
@@ -662,8 +644,8 @@ func TestWriterAndArchiver_write(t *testing.T) {
 		DB: domain.DataBaseOptions{
 			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -675,26 +657,25 @@ func TestWriterAndArchiver_write(t *testing.T) {
 }
 
 func TestOverlap_small_data(t *testing.T) {
-	axtools.InitLogger("info")
 	base := domain.BaseOptions{
 		Name:   "test",
 		Logger: log.Logger,
 		CTX:    context.Background(),
 	}
 	b2Opts := domain.B2Options{
-		Endpoint: "s3.us-east-005.backblazeb2.com",
+		Endpoint: b2Endpoint,
 		Credentials: backblaze.Credentials{
-			KeyID:          B2KeyId,
-			ApplicationKey: B2AppKey,
+			KeyID:          b2KeyId,
+			ApplicationKey: b2AppKey,
 		},
 		Salt: "test_salt",
 	}
-	db := localDB.ShouldConnect().DB
+	db := testDataBase
 	dbOpts := domain.DataBaseOptions{
 		DB: db,
 		Compression: domain.CompressionOptions{
-			Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-			Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+			Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+			Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 			EncryptionKey: []byte("12345678901234567890123456789012"),
 		},
 	}
@@ -719,15 +700,15 @@ func TestOverlap_small_data(t *testing.T) {
 	lines := 10000
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{
-			Name:   "lima-test",
+			Name:   "test",
 			Logger: log.Logger,
 			CTX:    context.Background(),
 		},
 		DB: domain.DataBaseOptions{
 			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -756,10 +737,10 @@ func TestOverlap_small_data(t *testing.T) {
 	//Запись всей базы в б2
 	ar, err := NewArchiverService(domain.ArchiverOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 			Salt: "test_salt",
 		},
@@ -771,8 +752,8 @@ func TestOverlap_small_data(t *testing.T) {
 		DB: domain.DataBaseOptions{
 			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -849,26 +830,25 @@ func TestOverlap_small_data(t *testing.T) {
 }
 
 func TestOverlap(t *testing.T) {
-	axtools.InitLogger("info")
 	base := domain.BaseOptions{
 		Name:   "test",
 		Logger: log.Logger,
 		CTX:    context.Background(),
 	}
 	b2Opts := domain.B2Options{
-		Endpoint: "s3.us-east-005.backblazeb2.com",
+		Endpoint: b2Endpoint,
 		Credentials: backblaze.Credentials{
-			KeyID:          B2KeyId,
-			ApplicationKey: B2AppKey,
+			KeyID:          b2KeyId,
+			ApplicationKey: b2AppKey,
 		},
 		Salt: "test_salt",
 	}
-	db := localDB.ShouldConnect().DB
+	db := testDataBase
 	dbOpts := domain.DataBaseOptions{
 		DB: db,
 		Compression: domain.CompressionOptions{
-			Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-			Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+			Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+			Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 			EncryptionKey: []byte("12345678901234567890123456789012"),
 		},
 	}
@@ -893,15 +873,15 @@ func TestOverlap(t *testing.T) {
 	lines := 1000000
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{
-			Name:   "lima-test",
+			Name:   "test",
 			Logger: log.Logger,
 			CTX:    context.Background(),
 		},
 		DB: domain.DataBaseOptions{
 			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
@@ -930,10 +910,10 @@ func TestOverlap(t *testing.T) {
 	//Запись всей базы в б2
 	ar, err := NewArchiverService(domain.ArchiverOptions{
 		B2: domain.B2Options{
-			Endpoint: "s3.us-east-005.backblazeb2.com",
+			Endpoint: b2Endpoint,
 			Credentials: backblaze.Credentials{
-				KeyID:          B2KeyId,
-				ApplicationKey: B2AppKey,
+				KeyID:          b2KeyId,
+				ApplicationKey: b2AppKey,
 			},
 			Salt: "test_salt",
 		},
@@ -945,8 +925,8 @@ func TestOverlap(t *testing.T) {
 		DB: domain.DataBaseOptions{
 			DB: db,
 			Compression: domain.CompressionOptions{
-				Compression:   axq.BlobCompression_BLOB_COMPRESSION_GZIP,
-				Encryption:    axq.BlobEncryption_BLOB_ENCRYPTION_AES,
+				Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+				Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},

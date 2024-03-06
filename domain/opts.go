@@ -85,6 +85,7 @@ type ReaderOptions struct {
 type B2ReaderOptions struct {
 	BaseOptions
 	B2          B2Options
+	DB          DataBaseOptions
 	ReaderName  string
 	LoaderCount int
 	OuterCount  int

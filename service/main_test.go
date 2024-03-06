@@ -21,7 +21,7 @@ var (
 	dbUser     = getenv("AX_TEST_DB_USER", "root")
 	dbPassword = getenv("AX_TEST_DB_PASSWORD", "")
 	dbName     = getenv("AX_TEST_DB_NAME", "axq")
-	dbHost     = getenv("AX_TEST_DB_HOST", "localhost")
+	dbHost     = getenv("AX_TEST_DB_HOST", "127.0.0.1")
 	dbPort     = getenv("AX_TEST_DB_PORT", "3306")
 )
 

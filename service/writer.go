@@ -63,7 +63,7 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	tableName := fmt.Sprintf("axq_%s", opts.Name)
 	if !w.db.Migrator().HasTable(tableName) {
 		opts.Logger.Debug().Str("table", tableName).Msg("create table")
-		if err := w.db.Table(tableName).AutoMigrate(domain.Blob{}); err != nil {
+		if err := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB").Set("gorm:table_options", "PARTITION BY KEY (fid) PARTITIONS 4").AutoMigrate(domain.Blob{}); err != nil {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
 		}
 	}

@@ -67,7 +67,7 @@ func (b *B2ReaderBuilder) WithB2Salt(salt string) *B2ReaderBuilder {
 	return b
 }
 
-func (b *B2ReaderBuilder) WithDisabledCompression() *B2ReaderBuilder {
+func (b *B2ReaderBuilder) WithoutCompression() *B2ReaderBuilder {
 	b.opts.B2.Compression.Compression = domain.BLOB_COMPRESSION_NONE
 	return b
 }

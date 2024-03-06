@@ -235,7 +235,6 @@ func (r *ReaderService) loadDB(index int) error {
 	for {
 		err := r.getData(fid, &batch)
 		if err != nil {
-			fmt.Println(err)
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				wlog.Warn().Uint64("fid", fid).Msg("not found")
 				time.Sleep(100 * time.Millisecond)
@@ -314,8 +313,14 @@ func (r *ReaderService) loadB2(index int) error {
 			}
 			continue
 		}
+		var blob protobuf.Blob
+		err = proto.Unmarshal(content, &blob)
+		if err != nil {
+			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob error")
+			continue
+		}
 		wlog.Debug().Uint64("fid", fid).Str("filename", filename).Msg("successfully downloaded file")
-		switch r.opts.B2.Compression.Encryption {
+		switch blob.Encryption {
 		case domain.BLOB_ENCRYPTION_AES:
 			content, err = r.dbAes.Decrypt(content)
 			if err != nil {
@@ -323,19 +328,13 @@ func (r *ReaderService) loadB2(index int) error {
 				continue
 			}
 		}
-		switch r.opts.B2.Compression.Compression {
+		switch blob.Compression {
 		case domain.BLOB_COMPRESSION_GZIP:
 			content, err = utils.GUnzipData(content)
 			if err != nil {
 				wlog.Error().Err(err).Uint64("fid", fid).Msg("unzip blob error")
 				continue
 			}
-		}
-		var blob protobuf.Blob
-		err = proto.Unmarshal(content, &blob)
-		if err != nil {
-			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob error")
-			continue
 		}
 		var list protobuf.BlobMessageList
 		err = proto.Unmarshal(blob.Messages, &list)
