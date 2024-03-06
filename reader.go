@@ -86,6 +86,11 @@ func (b *ReaderBuilder) WithB2Credentials(credentials backblaze.Credentials) *Re
 	return b
 }
 
+func (b *ReaderBuilder) WithB2Salt(salt string) *ReaderBuilder {
+	b.opts.B2.Salt = salt
+	return b
+}
+
 func (b *ReaderBuilder) WithDB(db *gorm.DB) *ReaderBuilder {
 	b.opts.DB.DB = db
 	return b

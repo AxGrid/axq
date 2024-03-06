@@ -186,8 +186,10 @@ func (a *ArchiverService) loader(index int) {
 				fid := atomic.AddUint64(&a.b2Fid, 1)
 				wlog.Info().Uint64("fid", fid).Msg("new blob")
 				a.currentBlob = &protobuf.Blob{
-					FromId: msg.Id(),
-					Fid:    fid,
+					FromId:      msg.Id(),
+					Fid:         fid,
+					Compression: protobuf.BlobCompression(a.opts.B2.Compression.Compression),
+					Encryption:  protobuf.BlobEncryption(a.opts.B2.Compression.Encryption),
 				}
 				a.messageList = &protobuf.BlobMessageList{
 					Fid: fid,
