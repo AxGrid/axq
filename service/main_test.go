@@ -13,19 +13,16 @@ import (
 )
 
 var testDataBase *gorm.DB
-var inMemoryDataBase *gorm.DB
 
 var (
 	b2KeyId    = os.Getenv("B2_KEY_ID")
 	b2AppKey   = os.Getenv("B2_APP_KEY")
 	b2Endpoint = "s3.us-east-005.backblazeb2.com"
-
 	dbUser     = "root"
 	dbPassword = ""
 	dbName     = "axq"
-
-	dbHost = "localhost"
-	dbPort = 3306
+	dbHost     = "localhost"
+	dbPort     = 3306
 )
 
 func TestMain(m *testing.M) {

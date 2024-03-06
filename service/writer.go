@@ -5,12 +5,12 @@
 package service
 
 import (
-	"axgrid/shared/axq/domain"
-	"axgrid/shared/axtools"
-	"axgrid/target/generated-sources/proto/axq"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/axgrid/axq/domain"
+	"github.com/axgrid/axq/protobuf"
+	"github.com/axgrid/axq/utils"
 	"github.com/golang/protobuf/proto"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -28,7 +28,7 @@ type WriterService struct {
 	lastId         uint64
 	inChan         chan *dataHolder
 	createBlobChan chan blobCreate
-	aes            *axtools.AES
+	aes            *utils.AES
 	logger         zerolog.Logger
 	db             *gorm.DB
 	tableName      string
@@ -49,11 +49,11 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 		ctx:            ctx,
 		cancelFunc:     cancelFunc,
 	}
-	if opts.DB.Compression.Encryption == axq.BlobEncryption_BLOB_ENCRYPTION_AES {
+	if opts.DB.Compression.Encryption == domain.BLOB_ENCRYPTION_AES {
 		if len(opts.DB.Compression.EncryptionKey) != 32 {
 			return nil, errors.New("invalid encryption key size")
 		}
-		aes := axtools.NewAES(opts.DB.Compression.EncryptionKey)
+		aes := utils.NewAES(opts.DB.Compression.EncryptionKey)
 		_, err := aes.Encrypt([]byte("test"))
 		if err != nil {
 			return nil, err
@@ -161,13 +161,13 @@ func (w *WriterService) save() {
 }
 
 func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
-	list := &axq.BlobMessageList{
-		Messages: make([]*axq.BlobMessage, len(blobList)),
+	list := &protobuf.BlobMessageList{
+		Messages: make([]*protobuf.BlobMessage, len(blobList)),
 	}
 	messageLastId := w.lastId
 	for i, data := range blobList {
 		messageLastId++
-		list.Messages[i] = &axq.BlobMessage{
+		list.Messages[i] = &protobuf.BlobMessage{
 			Id:      messageLastId,
 			Message: data.message,
 		}
@@ -177,14 +177,14 @@ func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
 		return nil, err
 	}
 	switch w.opts.DB.Compression.Compression {
-	case axq.BlobCompression_BLOB_COMPRESSION_GZIP:
-		blobBytes, err = axtools.GZipData(blobBytes)
+	case domain.BLOB_COMPRESSION_GZIP:
+		blobBytes, err = utils.GZipData(blobBytes)
 	}
 	if err != nil {
 		return nil, err
 	}
 	switch w.opts.DB.Compression.Encryption {
-	case axq.BlobEncryption_BLOB_ENCRYPTION_AES:
+	case domain.BLOB_ENCRYPTION_AES:
 		blobBytes, err = w.aes.Encrypt(blobBytes)
 	}
 	if err != nil {
@@ -244,11 +244,4 @@ func (w *WriterService) countPerformance() {
 			prevLastId = w.lastId
 		}
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
