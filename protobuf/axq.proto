@@ -1,0 +1,37 @@
+syntax="proto3";
+
+
+enum BlobCompression {
+  BLOB_COMPRESSION_NONE = 0;
+  BLOB_COMPRESSION_GZIP = 1;
+}
+
+enum BlobEncryption {
+  BLOB_ENCRYPTION_NONE = 0;
+  BLOB_ENCRYPTION_AES = 1;
+}
+
+
+message Blob {
+  uint64 fid = 1;
+  uint64 from_id = 2;
+  uint64 to_id = 3;
+  string name = 4;
+  uint64 count = 5;
+  bytes messages = 6;
+  uint64 db_fid = 9;
+  BlobCompression compression = 7;
+  BlobEncryption encryption = 8;
+}
+
+
+message BlobMessageList {
+  repeated BlobMessage messages = 1;
+  uint64 fid = 2;
+}
+
+message BlobMessage {
+  uint64 id = 1;
+  bytes message = 2;
+  uint64 fid = 3;
+}
