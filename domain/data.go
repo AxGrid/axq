@@ -4,10 +4,6 @@
 
 package domain
 
-import (
-	"time"
-)
-
 type Blob struct {
 	FID         uint64 `gorm:"primaryKey;column:fid"`
 	Compression BlobCompression
@@ -16,7 +12,6 @@ type Blob struct {
 	FromId      uint64
 	ToId        uint64
 	Message     []byte
-	CreatedAt   time.Time
 }
 
 type BlobCounter struct {
