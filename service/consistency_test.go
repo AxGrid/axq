@@ -58,7 +58,7 @@ func TestWriterService_consistency(t *testing.T) {
 	var fid, lastId uint64 = 1, 0
 	for {
 		var b domain.Blob
-		err = db.Table("axq_test_partition").Where("fid = ?", fid).First(&b).Error
+		err = db.Table("axq_test").Where("fid = ?", fid).First(&b).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return

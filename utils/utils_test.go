@@ -8,8 +8,8 @@ import (
 
 func TestAuthorizeB2(t *testing.T) {
 	c := backblaze.Credentials{
-		KeyID:          "39e21a181c18",
-		ApplicationKey: "0054ca0ddb7e31d7c935a5df8f49c55514ca8372f8",
+		KeyID:          b2KeyId,
+		ApplicationKey: b2AppKey,
 	}
 
 	token, err := AuthorizeB2(c)
@@ -19,14 +19,14 @@ func TestAuthorizeB2(t *testing.T) {
 
 func TestDownloadFileByName(t *testing.T) {
 	c := backblaze.Credentials{
-		KeyID:          "39e21a181c18",
-		ApplicationKey: "0054ca0ddb7e31d7c935a5df8f49c55514ca8372f8",
+		KeyID:          b2KeyId,
+		ApplicationKey: b2AppKey,
 	}
 
 	token, err := AuthorizeB2(c)
 	assert.Nil(t, err)
 
-	content, err := DownloadFileByName("axqueue-098f6bcd4621d373cade4e832627b4f6/1", token)
+	content, err := DownloadFileByName("", b2Endpoint, token)
 	assert.Nil(t, err)
 	assert.NotEmpty(t, content)
 }
