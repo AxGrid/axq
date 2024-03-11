@@ -132,8 +132,6 @@ func (w *WriterService) PushMany(messages [][]byte) error {
 	return nil
 }
 
-
-
 func (w *WriterService) PushProto(message proto.Message) error {
 	if w.stopped {
 		return errors.New("writer stopped")
@@ -144,22 +142,6 @@ func (w *WriterService) PushProto(message proto.Message) error {
 	}
 	return w.Push(messageBytes)
 }
-
-func (w *WriterService) PushProtoMany(messages []proto.Message) (err error) {
-	if w.stopped {
-		return errors.New("writer stopped")
-	}
-	var messageBytes = make([][]byte, len(messages))
-	for i, message := range messages {
-		messageBytes[i], err = proto.Marshal(message)
-		if err != nil {
-			return err
-		}
-	}
-	return w.PushMany(messageBytes)
-}
-
-
 
 func (w *WriterService) PushProtoMany(messages []proto.Message) (err error) {
 	if w.stopped {
@@ -201,12 +183,11 @@ func (w *WriterService) LastID() (uint64, error) {
 	}
 }
 
-
 func (w *WriterService) GetOpts() domain.ServiceOpts {
 	return &w.opts
 }
 
-func (r *WriterService) Counter() (uint64, error) {
+func (w *WriterService) Counter() (uint64, error) {
 	return 0, nil
 }
 
