@@ -43,7 +43,7 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	w := &WriterService{
 		opts:           opts,
 		inChan:         make(chan *dataHolder, opts.MaxBlobSize),
-		createBlobChan: make(chan blobCreate, opts.CreateQueueSize),
+		createBlobChan: make(chan blobCreate, opts.PartitionsCount),
 		logger:         opts.Logger.With().Str("name", opts.Name).Logger(),
 		db:             opts.DB.DB,
 		ctx:            ctx,
@@ -63,7 +63,8 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	tableName := fmt.Sprintf("axq_%s", opts.Name)
 	if !w.db.Migrator().HasTable(tableName) {
 		opts.Logger.Debug().Str("table", tableName).Msg("create table")
-		if err := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB").Set("gorm:table_options", "PARTITION BY KEY (fid) PARTITIONS 4").AutoMigrate(domain.Blob{}); err != nil {
+		partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
+		if err := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB").Set("gorm:table_options", partitionsValue).AutoMigrate(domain.Blob{}); err != nil {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
 		}
 	}
@@ -109,16 +110,29 @@ func (w *WriterService) Push(message []byte) error {
 	return <-holder.response
 }
 
-func (w *WriterService) LastID() (uint64, uint64, error) {
+func (w *WriterService) LastFID() (uint64, error) {
 	var blob domain.Blob
 	if err := w.db.Table(w.tableName).Order("fid desc").First(&blob).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, 0, nil
+			return 0, nil
 		} else {
-			return 0, 0, err
+			return 0, err
 		}
 	} else {
-		return blob.FID, blob.ToId, nil
+		return blob.FID, nil
+	}
+}
+
+func (w *WriterService) LastID() (uint64, error) {
+	var blob domain.Blob
+	if err := w.db.Table(w.tableName).Order("fid desc").First(&blob).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		} else {
+			return 0, err
+		}
+	} else {
+		return blob.ToId, nil
 	}
 }
 
@@ -126,7 +140,11 @@ func (w *WriterService) GetOpts() domain.ServiceOpts {
 	return &w.opts
 }
 
-func (w *WriterService) GetPerformance() uint64 {
+func (r *WriterService) Counter() (uint64, error) {
+	return 0, nil
+}
+
+func (w *WriterService) Performance() uint64 {
 	return w.performance
 }
 
@@ -138,7 +156,8 @@ func (w *WriterService) save() {
 		case data := <-w.inChan:
 			blobList := make([]*dataHolder, 0, w.opts.MaxBlobSize)
 			blobList = append(blobList, data)
-			for len(blobList)%w.opts.ChunkSize != 0 {
+			// TODO min
+			for i := 1; i < min(w.opts.MaxBlobSize, len(w.inChan)); i++ {
 				data = <-w.inChan
 				blobList = append(blobList, data)
 			}
@@ -244,4 +263,11 @@ func (w *WriterService) countPerformance() {
 			prevLastId = w.lastId
 		}
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

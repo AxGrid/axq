@@ -56,8 +56,7 @@ type CompressionOptions struct {
 type WriterOptions struct {
 	BaseOptions
 	DB              DataBaseOptions
-	CreateQueueSize int
-	ChunkSize       int
+	PartitionsCount int
 	MaxBlobSize     int
 }
 
@@ -67,6 +66,10 @@ func (w *WriterOptions) GetType() string {
 
 func (w *WriterOptions) GetName() string {
 	return w.BaseOptions.Name
+}
+
+func (w *WriterOptions) GetReaderName() string {
+	return "-"
 }
 
 type ReaderOptions struct {
@@ -80,6 +83,18 @@ type ReaderOptions struct {
 	LoaderCount int
 	WaiterCount int
 	LastId      *LastIdOptions
+}
+
+func (r *ReaderOptions) GetType() string {
+	return "Reader"
+}
+
+func (r *ReaderOptions) GetName() string {
+	return r.BaseOptions.Name
+}
+
+func (r *ReaderOptions) GetReaderName() string {
+	return r.ReaderName
 }
 
 type B2ReaderOptions struct {
@@ -117,4 +132,5 @@ type B2Options struct {
 type ServiceOpts interface {
 	GetType() string
 	GetName() string
+	GetReaderName() string
 }

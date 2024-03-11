@@ -8,8 +8,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/axgrid/axq/domain"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,7 +21,7 @@ import (
 func TestWriterService_Push(t *testing.T) {
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{
-			Name:   "test",
+			Name:   "test_new",
 			Logger: log.Logger,
 			CTX:    context.Background(),
 		},
@@ -27,9 +29,8 @@ func TestWriterService_Push(t *testing.T) {
 			DB:          testDataBase,
 			Compression: domain.CompressionOptions{},
 		},
-		CreateQueueSize: 1000,
+		PartitionsCount: 4,
 		MaxBlobSize:     100000,
-		ChunkSize:       1000,
 	}
 
 	w, err := NewWriterService(opts)
@@ -50,7 +51,12 @@ func TestWriterService_Push(t *testing.T) {
 	}
 	wg.Wait()
 	assert.True(t, true)
-	fid, lastId, err := w.LastID()
+	fid, err := w.LastFID()
+	if !assert.Nil(t, err) {
+		t.Fatal(err)
+	}
+
+	lastId, err := w.LastID()
 	if !assert.Nil(t, err) {
 		t.Fatal(err)
 	}
@@ -59,19 +65,19 @@ func TestWriterService_Push(t *testing.T) {
 }
 
 func TestWriterService_Benchmark(t *testing.T) {
+	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).Level(zerolog.InfoLevel)
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{
 			Name:   "test",
-			Logger: log.Logger,
+			Logger: logger,
 			CTX:    context.Background(),
 		},
 		DB: domain.DataBaseOptions{
 			DB:          testDataBase,
 			Compression: domain.CompressionOptions{},
 		},
-		CreateQueueSize: 1000,
+		PartitionsCount: 3,
 		MaxBlobSize:     100000,
-		ChunkSize:       1000,
 	}
 
 	w, err := NewWriterService(opts)
@@ -89,7 +95,7 @@ func TestWriterService_Benchmark(t *testing.T) {
 			case <-ctxt.Done():
 				return
 			case <-time.After(time.Second * 1):
-				log.Info().Int64("op-per-sec", int64(count-prev)).Msg("tick")
+				logger.Info().Int64("op-per-sec", int64(count-prev)).Msg("tick")
 				prev = count
 			}
 		}

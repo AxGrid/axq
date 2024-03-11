@@ -32,32 +32,13 @@ func main() {
 	}
 	g1 = append(g1, w1, r1, r2, r3)
 
-	// Group 2
-	var g2 []domain.Service
-	w2, err := axq.Writer().WithName("unnamed2").Build()
-	if err != nil {
-		panic(err)
-	}
-
-	r4, err := axq.Reader().WithName("unnamed2").Build()
-	if err != nil {
-		panic(err)
-	}
-
-	r5, err := axq.Reader().WithName("unnamed2").Build()
-	if err != nil {
-		panic(err)
-	}
-
-	r6, err := axq.Reader().WithName("unnamed2").Build()
-	if err != nil {
-		panic(err)
-	}
-	g2 = append(g2, w2, r4, r5, r6)
-
+	// Подсвечивать желтым если отстает больше чем на 5%
+	// Шапка
+	// Версия бд, буффер сайз, операции
+	// Флаги запуска с коннектом к другой бд
 	updCh := make(chan tea.Msg)
 	//TODO groups
-	if _, err = tea.NewProgram(cli.NewCLI(updCh, 2, []domain.Group{g1, g2})).Run(); err != nil {
+	if _, err = tea.NewProgram(cli.NewCLI(updCh, 2, []domain.Group{g1})).Run(); err != nil {
 		panic(err)
 	}
 }

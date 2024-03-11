@@ -50,6 +50,19 @@ type ReaderService struct {
 	stopped        bool
 	deltaTime      int64
 	deltaTimeCount int64
+	performance    uint64
+}
+
+func (r *ReaderService) GetOpts() domain.ServiceOpts {
+	return &r.opts
+}
+
+func (r *ReaderService) Counter() (uint64, error) {
+	return r.counters.Get()
+}
+
+func (r *ReaderService) Performance() uint64 {
+	return r.performance
 }
 
 func (r *ReaderService) Pop() domain.Message {
@@ -60,8 +73,12 @@ func (r *ReaderService) C() <-chan domain.Message {
 	return r.outChan
 }
 
-func (r *ReaderService) LastId() uint64 {
-	return r.counters.lastId
+func (r *ReaderService) LastFID() (uint64, error) {
+	return r.dbFid, nil
+}
+
+func (r *ReaderService) LastID() (uint64, error) {
+	return r.lastId.Current(), nil
 }
 
 func (r *ReaderService) GetWaitersCount() int {
@@ -159,6 +176,7 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 	r.fidLock = NewFidLock(r.dbFid)
 	r.b2FidLock = NewFidLock(r.b2Fid)
 	go r.createLoaders(ctx)
+	go r.countPerformance()
 	for i := 0; i < opts.WaiterCount; i++ {
 		go r.outer(i)
 	}
@@ -467,6 +485,19 @@ func (r *ReaderService) createBucket(bucketName string) (*backblaze.Bucket, erro
 	}
 
 	return bucket, nil
+}
+
+func (w *ReaderService) countPerformance() {
+	prevLastId := w.lastId.Current()
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-time.NewTicker(time.Second).C:
+			w.performance = w.lastId.Current() - prevLastId
+			prevLastId = w.lastId.Current()
+		}
+	}
 }
 
 type messageHolder struct {
