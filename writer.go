@@ -16,6 +16,15 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+type Writer interface {
+	Push(message []byte) error
+	Close()
+	GetOpts() domain.ServiceOpts
+	Counter() (uint64, error)
+	LastFID() (uint64, error)
+	LastID() (uint64, error)
+	Performance() uint64
+}
 type WriterBuilder struct {
 	opts       domain.WriterOptions
 	dbName     string
@@ -25,7 +34,7 @@ type WriterBuilder struct {
 	dbPort     int
 }
 
-func Writer() *WriterBuilder {
+func WriterBuild() *WriterBuilder {
 	return &WriterBuilder{
 		dbName:     "axq",
 		dbUser:     "root",
@@ -87,7 +96,7 @@ func (b *WriterBuilder) WithPartitionsCount(count int) *WriterBuilder {
 	return b
 }
 
-func (b *WriterBuilder) Build() (domain.Writer, error) {
+func (b *WriterBuilder) Build() (Writer, error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
 		connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&parseTime=True&loc=Local", b.dbUser, b.dbPassword, b.dbHost, b.dbPort, b.dbName)
@@ -103,7 +112,7 @@ func (b *WriterBuilder) Build() (domain.Writer, error) {
 	}
 	return res, nil
 }
-func (b *WriterBuilder) ShouldBuild() domain.Writer {
+func (b *WriterBuilder) ShouldBuild() Writer {
 	res, err := b.Build()
 	if err != nil {
 		panic(err)

@@ -11,7 +11,7 @@ func main() {
 
 	// Group 1
 	var g1 []domain.Service
-	w1, err := axq.Writer().WithPartitionsCount(4).Build()
+	w1, err := axq.WriterBuild().WithPartitionsCount(4).Build()
 	if err != nil {
 		panic(err)
 	}
