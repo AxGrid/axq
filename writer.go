@@ -25,6 +25,7 @@ type Writer interface {
 	LastID() (uint64, error)
 	Performance() uint64
 }
+
 type WriterBuilder struct {
 	opts       domain.WriterOptions
 	dbName     string

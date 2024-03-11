@@ -8,11 +8,16 @@ import (
 	"gopkg.in/kothar/go-backblaze.v0"
 )
 
+type B2Reader interface {
+	Pop() domain.Message
+	C() <-chan domain.Message
+}
+
 type B2ReaderBuilder struct {
 	opts domain.B2ReaderOptions
 }
 
-func B2Reader() *B2ReaderBuilder {
+func B2ReaderBuild() *B2ReaderBuilder {
 	return &B2ReaderBuilder{
 		opts: domain.B2ReaderOptions{
 			BaseOptions: domain.BaseOptions{
@@ -88,7 +93,7 @@ func (b *B2ReaderBuilder) WithLastId(id *domain.LastIdOptions) *B2ReaderBuilder 
 	return b
 }
 
-func (b *B2ReaderBuilder) Build() (domain.B2Reader, error) {
+func (b *B2ReaderBuilder) Build() (B2Reader, error) {
 	res, err := service.NewB2ReaderService(b.opts)
 	if err != nil {
 		return nil, err
@@ -96,7 +101,7 @@ func (b *B2ReaderBuilder) Build() (domain.B2Reader, error) {
 	return res, nil
 }
 
-func (b *B2ReaderBuilder) ShouldBuild() domain.B2Reader {
+func (b *B2ReaderBuilder) ShouldBuild() B2Reader {
 	res, err := b.Build()
 	if err != nil {
 		panic(err)

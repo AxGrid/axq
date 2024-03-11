@@ -16,17 +16,17 @@ func main() {
 		panic(err)
 	}
 
-	r1, err := axq.Reader().Build()
+	r1, err := axq.ReaderBuild().Build()
 	if err != nil {
 		panic(err)
 	}
 
-	r2, err := axq.Reader().Build()
+	r2, err := axq.ReaderBuild().Build()
 	if err != nil {
 		panic(err)
 	}
 
-	r3, err := axq.Reader().Build()
+	r3, err := axq.ReaderBuild().Build()
 	if err != nil {
 		panic(err)
 	}

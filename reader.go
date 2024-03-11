@@ -17,6 +17,16 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+type Reader interface {
+	Pop() domain.Message
+	C() <-chan domain.Message
+	GetOpts() domain.ServiceOpts
+	Counter() (uint64, error)
+	LastFID() (uint64, error)
+	LastID() (uint64, error)
+	Performance() uint64
+}
+
 type ReaderBuilder struct {
 	opts       domain.ReaderOptions
 	dbName     string
@@ -26,7 +36,7 @@ type ReaderBuilder struct {
 	dbPort     int
 }
 
-func Reader() *ReaderBuilder {
+func ReaderBuild() *ReaderBuilder {
 	return &ReaderBuilder{
 		dbName:     "axq",
 		dbUser:     "root",
@@ -118,7 +128,7 @@ func (b *ReaderBuilder) WithLastId(id *domain.LastIdOptions) *ReaderBuilder {
 	return b
 }
 
-func (b *ReaderBuilder) Build() (domain.Reader, error) {
+func (b *ReaderBuilder) Build() (Reader, error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
 		connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&parseTime=True&loc=Local", b.dbUser, b.dbPassword, b.dbHost, b.dbPort, b.dbName)
@@ -135,7 +145,7 @@ func (b *ReaderBuilder) Build() (domain.Reader, error) {
 	return res, nil
 }
 
-func (b *ReaderBuilder) ShouldBuild() domain.Reader {
+func (b *ReaderBuilder) ShouldBuild() Reader {
 	res, err := b.Build()
 	if err != nil {
 		panic(err)

@@ -17,6 +17,10 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+type Archiver interface {
+	Close()
+}
+
 type ArchiverBuilder struct {
 	opts       domain.ArchiverOptions
 	dbName     string
@@ -26,7 +30,7 @@ type ArchiverBuilder struct {
 	dbPort     int
 }
 
-func Archiver() *ArchiverBuilder {
+func ArchiverBuild() *ArchiverBuilder {
 	return &ArchiverBuilder{
 		dbName:     "axq",
 		dbUser:     "root",
