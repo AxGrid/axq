@@ -4,7 +4,10 @@
 
 package domain
 
-import "errors"
+import (
+	"errors"
+	"github.com/golang/protobuf/proto"
+)
 
 var (
 	ErrB2FileNotFound = errors.New("b2 file not found")
@@ -20,4 +23,5 @@ type Message interface {
 	Message() []byte
 	Done()
 	Error(err error)
+	UnmarshalProto(v proto.Message) error
 }

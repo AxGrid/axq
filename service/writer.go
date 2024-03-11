@@ -109,6 +109,53 @@ func (w *WriterService) Push(message []byte) error {
 	return <-holder.response
 }
 
+// TODO: вот его переделать нужно будет
+func (w *WriterService) PushMany(messages [][]byte) error {
+	if w.stopped {
+		return errors.New("writer stopped")
+	}
+	var holders = make([]*dataHolder, len(messages))
+	for i, message := range messages {
+		holder := &dataHolder{
+			message:  message,
+			response: make(chan error, 1),
+		}
+		holders[i] = holder
+		w.inChan <- holder
+	}
+	for _, holder := range holders {
+		if err := <-holder.response; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *WriterService) PushProto(message proto.Message) error {
+	if w.stopped {
+		return errors.New("writer stopped")
+	}
+	messageBytes, err := proto.Marshal(message)
+	if err != nil {
+		return err
+	}
+	return w.Push(messageBytes)
+}
+
+func (w *WriterService) PushProtoMany(messages []proto.Message) (err error) {
+	if w.stopped {
+		return errors.New("writer stopped")
+	}
+	var messageBytes = make([][]byte, len(messages))
+	for i, message := range messages {
+		messageBytes[i], err = proto.Marshal(message)
+		if err != nil {
+			return err
+		}
+	}
+	return w.PushMany(messageBytes)
+}
+
 func (w *WriterService) LastID() (uint64, uint64, error) {
 	var blob domain.Blob
 	if err := w.db.Table(w.tableName).Order("fid desc").First(&blob).Error; err != nil {

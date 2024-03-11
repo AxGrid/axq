@@ -496,3 +496,6 @@ func (b *messageHolder) Done() {
 func (b *messageHolder) Error(err error) {
 	b.ack <- blobAck{id: b.id, err: err}
 }
+func (b *messageHolder) UnmarshalProto(v proto.Message) error {
+	return proto.Unmarshal(b.message, v)
+}
