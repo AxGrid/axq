@@ -31,9 +31,8 @@ func TestWriterService_consistency(t *testing.T) {
 			DB:          db,
 			Compression: domain.CompressionOptions{},
 		},
-		CreateQueueSize: 1000,
-		MaxBlobSize:     10000,
-		ChunkSize:       1000,
+		PartitionsCount: 4,
+		MaxBlobSize:     100000,
 	}
 
 	w, err := NewWriterService(opts)

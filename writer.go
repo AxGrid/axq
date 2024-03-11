@@ -38,8 +38,8 @@ func Writer() *WriterBuilder {
 				Logger: zerolog.Nop(),
 				Name:   "unnamed",
 			},
-			MaxBlobSize: 10_000,
-			ChunkSize:   1000,
+			MaxBlobSize:     10_000,
+			PartitionsCount: 4,
 			DB: domain.DataBaseOptions{
 				Compression: domain.CompressionOptions{
 					Compression: domain.BLOB_COMPRESSION_GZIP,
@@ -82,8 +82,8 @@ func (b *WriterBuilder) WithMaxBlobSize(size int) *WriterBuilder {
 	return b
 }
 
-func (b *WriterBuilder) WithChunkSize(size int) *WriterBuilder {
-	b.opts.ChunkSize = size
+func (b *WriterBuilder) WithPartitionsCount(count int) *WriterBuilder {
+	b.opts.PartitionsCount = count
 	return b
 }
 

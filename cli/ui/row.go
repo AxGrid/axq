@@ -34,7 +34,7 @@ func (r *row) View() string {
 	view := strings.Builder{}
 	view.WriteString(defaultStyle.Render(r.service.GetOpts().GetType()))
 	view.WriteString(defaultStyle.Render(r.service.GetOpts().GetName()))
-	view.WriteString(defaultStyle.Render(fmt.Sprintf("%d", r.service.GetPerformance())))
+	view.WriteString(defaultStyle.Render(fmt.Sprintf("%d", r.service.Performance())))
 	view.WriteString(defaultStyle.Render("OK"))
 	return view.String()
 }
@@ -58,7 +58,7 @@ func (r *row) updatePerformance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.NewTicker(time.Second).C:
-			r.performance = r.service.GetPerformance()
+			r.performance = r.service.Performance()
 			r.updateCh <- models.PerformanceUpdMsg{}
 		}
 	}
