@@ -266,6 +266,10 @@ func (r *ReaderService) loadDB(index int) error {
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
+		if len(batch) == 0 {
+			wlog.Warn().Msg("empty batch")
+			continue
+		}
 		for _, blob := range batch {
 			wlog.Debug().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
 			data := blob.Message

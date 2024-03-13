@@ -37,11 +37,11 @@ type WriterBuilder struct {
 
 func WriterBuild() *WriterBuilder {
 	return &WriterBuilder{
-		dbName:     "axq",
 		dbUser:     "root",
 		dbPassword: "",
 		dbHost:     "localhost",
 		dbPort:     3306,
+		dbName:     "axq",
 		opts: domain.WriterOptions{
 			BaseOptions: domain.BaseOptions{
 				CTX:    context.Background(),
