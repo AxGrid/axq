@@ -240,6 +240,7 @@ func (r *ReaderService) loaderB2(index int) {
 			return
 		default:
 			if err := r.loadB2(index); err != nil {
+				//panic(err)
 				return
 			}
 		}

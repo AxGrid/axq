@@ -44,6 +44,20 @@ func main() {
 		panic(err)
 	}
 
+	//go func() {
+	//	for i := 0; i < 10000; i++ {
+	//		go func(i int) {
+	//			for {
+	//				err = w1.Push([]byte(fmt.Sprintf("test_%d", i)))
+	//				if err != nil {
+	//					panic(err)
+	//				}
+	//			}
+	//		}(i)
+	//	}
+	//}()
+	//time.Sleep(10 * time.Second)
+
 	r1, err := axq.ReaderBuild().WithDB(db).WithReaderName("not_default_name").Build()
 	if err != nil {
 		panic(err)
