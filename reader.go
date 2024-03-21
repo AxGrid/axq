@@ -28,12 +28,14 @@ type Reader interface {
 }
 
 type ReaderBuilder struct {
-	opts       domain.ReaderOptions
-	dbName     string
-	dbUser     string
-	dbPassword string
-	dbHost     string
-	dbPort     int
+	opts        domain.ReaderOptions
+	dbName      string
+	dbUser      string
+	dbPassword  string
+	dbHost      string
+	dbPort      int
+	workerCount int
+	workerFunc  WorkerFunc
 }
 
 func ReaderBuild() *ReaderBuilder {
@@ -128,6 +130,18 @@ func (b *ReaderBuilder) WithLastId(id *domain.LastIdOptions) *ReaderBuilder {
 	return b
 }
 
+func (b *ReaderBuilder) WithTransform() *ReaderBuilder {
+	return b
+}
+
+type WorkerFunc func(i int, msg Message)
+
+func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
+	b.workerCount = count
+	b.workerFunc = f
+	return b
+}
+
 func (b *ReaderBuilder) Build() (Reader, error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
@@ -137,6 +151,16 @@ func (b *ReaderBuilder) Build() (Reader, error) {
 			return nil, err
 		}
 		b.opts.DB.DB = db
+	}
+	for i := 0; i < b.workerCount; i++ {
+		go func() {
+			select {
+			case <-b.opts.BaseOptions.CTX.Done():
+				return
+			case msg := <-b:
+
+			}
+		}()
 	}
 	res, err := service.NewReaderService(b.opts)
 	if err != nil {
