@@ -22,6 +22,12 @@ func TestNewReaderTransformer(t *testing.T) {
 
 	middlewares := []TransformMiddlewareFunc[string]{
 		func(ctx *axtransform.TransformContext[domain.Message, string]) {
+			if len(ctx.From.Message()) == 0 {
+				ctx.Error(domain.ErrEmptyMessage)
+				ctx.Abort()
+			}
+		},
+		func(ctx *axtransform.TransformContext[domain.Message, string]) {
 			ctx.To = string(ctx.From.Message())
 			ctx.Next()
 		},

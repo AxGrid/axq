@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axtransform"
 )
@@ -57,6 +58,10 @@ func (b *ReaderTransformerBuilder[T]) Build() *ReaderTransformer[T] {
 			select {
 			case msg := <-res.reader.C():
 				t, err := res.transformer.Transform(msg)
+				if errors.Is(err, domain.SkipMessageError) {
+					msg.Done()
+					continue
+				}
 				if err != nil {
 					msg.Error(err)
 					continue
