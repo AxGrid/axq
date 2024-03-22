@@ -18,8 +18,8 @@ import (
 )
 
 type Reader interface {
-	Pop() domain.Message
-	C() <-chan domain.Message
+	Pop() Message
+	C() <-chan Message
 	GetOpts() domain.ServiceOpts
 	Counter() (uint64, error)
 	LastFID() (uint64, error)
@@ -28,14 +28,16 @@ type Reader interface {
 }
 
 type ReaderBuilder struct {
-	opts        domain.ReaderOptions
-	dbName      string
-	dbUser      string
-	dbPassword  string
-	dbHost      string
-	dbPort      int
-	workerCount int
-	workerFunc  WorkerFunc
+	opts               domain.ReaderOptions
+	dbName             string
+	dbUser             string
+	dbPassword         string
+	dbHost             string
+	dbPort             int
+	workerCount        int
+	workerFunc         WorkerFunc
+	transformer        *domain.ReaderTransformer[any]
+	transformFunctions []domain.TransformFunc[any]
 }
 
 func ReaderBuild() *ReaderBuilder {
@@ -130,15 +132,16 @@ func (b *ReaderBuilder) WithLastId(id *domain.LastIdOptions) *ReaderBuilder {
 	return b
 }
 
-func (b *ReaderBuilder) WithTransform() *ReaderBuilder {
-	return b
-}
-
 type WorkerFunc func(i int, msg Message)
 
 func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
 	b.workerCount = count
 	b.workerFunc = f
+	return b
+}
+
+func (b *ReaderBuilder) WithTransformFunctions(functions ...domain.TransformFunc[any]) *ReaderBuilder {
+	b.transformFunctions = functions
 	return b
 }
 
@@ -152,19 +155,23 @@ func (b *ReaderBuilder) Build() (Reader, error) {
 		}
 		b.opts.DB.DB = db
 	}
-	for i := 0; i < b.workerCount; i++ {
-		go func() {
-			select {
-			case <-b.opts.BaseOptions.CTX.Done():
-				return
-			case msg := <-b:
-
-			}
-		}()
-	}
 	res, err := service.NewReaderService(b.opts)
 	if err != nil {
 		return nil, err
+	}
+	if b.workerFunc != nil {
+		//TODO transforms
+		for i := 0; i < b.workerCount; i++ {
+			go func(i int) {
+				select {
+				case <-b.opts.BaseOptions.CTX.Done():
+					return
+				case msg := <-res.C():
+
+					b.workerFunc(i, msg)
+				}
+			}(i)
+		}
 	}
 	return res, nil
 }

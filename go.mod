@@ -18,6 +18,7 @@ require (
 )
 
 require (
+	github.com/axgrid/axtransform v0.0.0-20240321090434-11347af1e82e // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/bubbletea v0.25.0 // indirect
 	github.com/charmbracelet/lipgloss v0.10.0 // indirect

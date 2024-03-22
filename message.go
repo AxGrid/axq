@@ -9,3 +9,9 @@ type Message interface {
 	Error(err error)
 	UnmarshalProto(v proto.Message) error
 }
+
+type ReaderMessageHolder[T any] interface {
+	Msg() T
+	Done()
+	Error(err error)
+}
