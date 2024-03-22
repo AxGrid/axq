@@ -20,18 +20,28 @@ func TestNewReaderTransformer(t *testing.T) {
 	}
 	msg := <-outChan
 
-	middlewares := []axtransform.TransformFunc[domain.Message, *messageHolder]{
-		func(t *axtransform.TransformContext[domain.Message, *messageHolder]) {
-			holder := t.From.(*messageHolder)
-			holder.fid++
-			t.To = holder
+	middlewares := []TransformMiddlewareFunc[string]{
+		func(ctx *axtransform.TransformContext[domain.Message, string]) {
+			ctx.To = string(ctx.From.Message())
+			ctx.Next()
+		},
+		func(ctx *axtransform.TransformContext[domain.Message, string]) {
+			ctx.Next()
+			if ctx.Error() == nil {
+				ctx.From.Done()
+			} else {
+				ctx.From.Error(ctx.Error())
+			}
 		},
 	}
 
-	transformer := NewReaderTransformer[*messageHolder]().
+	transformer := NewReaderTransformer[string]().
 		WithContext(ctx).
 		WithMiddlewares(middlewares...).
 		Build()
+
+	newMsg := <-transformer.C()
+	assert.Equal(t, newMsg.Data(), "message")
 
 	tr, err := transformer.Transform(msg)
 	assert.Nil(t, err)

@@ -8,8 +8,9 @@ import (
 
 type ReaderTransformer[T any] struct {
 	ctx         context.Context
-	middlewares []axtransform.TransformFunc[domain.Message, T]
 	transformer *axtransform.AxTransform[domain.Message, T]
+	outChan     chan TransformHolder[T]
+	reader      *ReaderService
 }
 
 type TransformMiddlewareFunc[T any] func(ctx *axtransform.TransformContext[domain.Message, T])
@@ -18,6 +19,10 @@ type ReaderTransformerBuilder[T any] struct {
 	ctx         context.Context
 	middlewares []TransformMiddlewareFunc[T]
 	builder     *axtransform.Builder[domain.Message, T]
+}
+
+func (r *ReaderTransformer[T]) C() chan TransformHolder[T] {
+	return r.outChan
 }
 
 func NewReaderTransformer[T any]() *ReaderTransformerBuilder[T] {
@@ -43,11 +48,28 @@ func (b *ReaderTransformerBuilder[T]) Build() *ReaderTransformer[T] {
 			m(ctx)
 		})
 	}
-	return &ReaderTransformer[T]{
+	res := &ReaderTransformer[T]{
 		ctx:         b.ctx,
-		middlewares: middlewaresFunc,
 		transformer: b.builder.WithMiddlewares(middlewaresFunc...).Build(),
 	}
+	go func() {
+		for {
+			select {
+			case msg := <-res.reader.C():
+				t, err := res.transformer.Transform(msg)
+				if err != nil {
+					msg.Error(err)
+					continue
+				}
+				holder := &transformHolder[T]{
+					msg:  msg,
+					data: t,
+				}
+				res.outChan <- holder
+			}
+		}
+
+	}()
 }
 
 func (t *ReaderTransformer[T]) Transform(from domain.Message) (T, error) {
