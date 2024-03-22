@@ -18,8 +18,8 @@ import (
 )
 
 type Reader interface {
-	Pop() Message
-	C() <-chan Message
+	Pop() domain.Message
+	C() <-chan domain.Message
 	GetOpts() domain.ServiceOpts
 	Counter() (uint64, error)
 	LastFID() (uint64, error)
@@ -36,8 +36,8 @@ type ReaderBuilder struct {
 	dbPort             int
 	workerCount        int
 	workerFunc         WorkerFunc
-	transformer        *domain.ReaderTransformer[any]
-	transformFunctions []domain.TransformFunc[any]
+	transformer        *service.ReaderTransformer[any]
+	transformFunctions []service.TransformFunc[any]
 }
 
 func ReaderBuild() *ReaderBuilder {
@@ -132,7 +132,7 @@ func (b *ReaderBuilder) WithLastId(id *domain.LastIdOptions) *ReaderBuilder {
 	return b
 }
 
-type WorkerFunc func(i int, msg Message)
+type WorkerFunc func(i int, msg domain.Message)
 
 func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
 	b.workerCount = count
@@ -140,7 +140,7 @@ func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
 	return b
 }
 
-func (b *ReaderBuilder) WithTransformFunctions(functions ...domain.TransformFunc[any]) *ReaderBuilder {
+func (b *ReaderBuilder) WithTransformFunctions(functions ...service.TransformFunc[any]) *ReaderBuilder {
 	b.transformFunctions = functions
 	return b
 }
