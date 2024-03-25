@@ -75,6 +75,7 @@ func (b *ReaderTransformerBuilder[T]) Build() *ReaderTransformer[T] {
 		}
 
 	}()
+	return res
 }
 
 func (t *ReaderTransformer[T]) Transform(from domain.Message) (T, error) {
