@@ -58,7 +58,7 @@ func (b *ReaderTransformerBuilder[T]) Build() *ReaderTransformer[T] {
 			select {
 			case msg := <-res.reader.C():
 				t, err := res.transformer.Transform(msg)
-				if errors.Is(err, domain.SkipMessageError) {
+				if errors.Is(err, domain.ErrSkipMessage) {
 					msg.Done()
 					continue
 				}
