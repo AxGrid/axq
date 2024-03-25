@@ -143,10 +143,11 @@ func (w *WriterService) PushProto(message proto.Message) error {
 	return w.Push(messageBytes)
 }
 
-func (w *WriterService) PushProtoMany(messages []proto.Message) (err error) {
+func (w *WriterService) PushProtoMany(messages []proto.Message) error {
 	if w.stopped {
 		return errors.New("writer stopped")
 	}
+	var err error
 	var messageBytes = make([][]byte, len(messages))
 	for i, message := range messages {
 		messageBytes[i], err = proto.Marshal(message)

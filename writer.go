@@ -10,6 +10,7 @@ import (
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/service"
 	"github.com/axgrid/axq/utils"
+	"github.com/golang/protobuf/proto"
 	"github.com/rs/zerolog"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -18,6 +19,9 @@ import (
 
 type Writer interface {
 	Push(message []byte) error
+	PushMany(messages [][]byte) error
+	PushProto(message proto.Message) error
+	PushProtoMany(messages []proto.Message) error
 	Close()
 	GetOpts() domain.ServiceOpts
 	Counter() (uint64, error)
