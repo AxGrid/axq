@@ -492,15 +492,15 @@ func (r *ReaderService) createBucket(bucketName string) (*backblaze.Bucket, erro
 	return bucket, nil
 }
 
-func (w *ReaderService) countPerformance() {
-	prevLastId := w.lastId.Current()
+func (r *ReaderService) countPerformance() {
+	prevLastId := r.lastId.Current()
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-r.ctx.Done():
 			return
 		case <-time.NewTicker(time.Second).C:
-			w.performance = w.lastId.Current() - prevLastId
-			prevLastId = w.lastId.Current()
+			r.performance = r.lastId.Current() - prevLastId
+			prevLastId = r.lastId.Current()
 		}
 	}
 }

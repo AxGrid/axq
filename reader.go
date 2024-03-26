@@ -36,8 +36,7 @@ type ReaderBuilder struct {
 	dbPort             int
 	workerCount        int
 	workerFunc         WorkerFunc
-	transformer        *service.ReaderTransformer[any]
-	transformFunctions []service.TransformFunc[any]
+	transformFunctions []service.TransformMiddlewareFunc[any]
 }
 
 func ReaderBuild() *ReaderBuilder {
@@ -140,7 +139,7 @@ func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
 	return b
 }
 
-func (b *ReaderBuilder) WithTransformFunctions(functions ...service.TransformFunc[any]) *ReaderBuilder {
+func (b *ReaderBuilder) WithTransformFunctions(functions ...service.TransformMiddlewareFunc[any]) *ReaderBuilder {
 	b.transformFunctions = functions
 	return b
 }
@@ -155,25 +154,46 @@ func (b *ReaderBuilder) Build() (Reader, error) {
 		}
 		b.opts.DB.DB = db
 	}
-	res, err := service.NewReaderService(b.opts)
+
+	reader, err := service.NewReaderService(b.opts)
 	if err != nil {
 		return nil, err
 	}
+	if b.transformFunctions != nil {
+		transformer := service.NewReaderTransformer[any]().WithContext(b.opts.CTX).
+			WithMiddlewares(b.transformFunctions...).
+			WithReader(reader).
+			Build()
+
+		for i := 0; i < b.workerCount; i++ {
+			go func(i int) {
+				for {
+					select {
+					case <-b.opts.CTX.Done():
+						return
+					case msg := <-transformer.C():
+						b.workerFunc(i, msg)
+					}
+				}
+			}(i)
+		}
+		return transformer, err
+	}
+
 	if b.workerFunc != nil {
-		//TODO transforms
 		for i := 0; i < b.workerCount; i++ {
 			go func(i int) {
 				select {
 				case <-b.opts.BaseOptions.CTX.Done():
 					return
-				case msg := <-res.C():
+				case msg := <-reader.C():
 
 					b.workerFunc(i, msg)
 				}
 			}(i)
 		}
 	}
-	return res, nil
+	return reader, nil
 }
 
 func (b *ReaderBuilder) ShouldBuild() Reader {
