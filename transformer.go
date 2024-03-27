@@ -18,12 +18,14 @@ type Transformer[T any] interface {
 }
 
 type ReaderTransformerBuilder[T any] struct {
-	opts       domain.ReaderTransformerOptions[T]
-	dbName     string
-	dbUser     string
-	dbPassword string
-	dbHost     string
-	dbPort     int
+	opts        domain.ReaderTransformerOptions[T]
+	workerCount int
+	workerFunc  domain.WorkerFunc
+	dbName      string
+	dbUser      string
+	dbPassword  string
+	dbHost      string
+	dbPort      int
 }
 
 func ReaderTransformerBuild[T any]() *ReaderTransformerBuilder[T] {
@@ -121,6 +123,12 @@ func (b *ReaderTransformerBuilder[T]) WithLastId(id *domain.LastIdOptions) *Read
 	return b
 }
 
+func (b *ReaderTransformerBuilder[T]) WithWorkerFunc(count int, f domain.WorkerFunc) *ReaderTransformerBuilder[T] {
+	b.workerCount = count
+	b.workerFunc = f
+	return b
+}
+
 func (b *ReaderTransformerBuilder[T]) WithMiddlewares(middlewares ...domain.TransformMiddlewareFunc[T]) *ReaderTransformerBuilder[T] {
 	b.opts.Middlewares = append(b.opts.Middlewares, middlewares...)
 	return b
@@ -137,5 +145,21 @@ func (b *ReaderTransformerBuilder[T]) Build() (Transformer[T], error) {
 		b.opts.DB.DB = db
 	}
 
-	return service.NewReaderTransformer[T](b.opts)
+	res, err := service.NewReaderTransformer[T](b.opts)
+	if err != nil {
+		return nil, err
+	}
+	if b.workerFunc != nil {
+		for i := 0; i < b.workerCount; i++ {
+			go func(i int) {
+				select {
+				case <-b.opts.BaseOptions.CTX.Done():
+					return
+				case msg := <-res.C():
+					b.workerFunc(i, msg.Message())
+				}
+			}(i)
+		}
+	}
+	return res, nil
 }

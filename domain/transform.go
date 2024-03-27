@@ -10,6 +10,8 @@ type TransformHolder[T any] interface {
 	Worker() int
 }
 
+type WorkerFunc func(i int, msg Message)
+
 type TransformMiddlewareFunc[T any] func(ctx *axtransform.TransformContext[Message, T])
 
 type TransformFunc[T any] func(worker int, t TransformHolder[T])

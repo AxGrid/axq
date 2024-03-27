@@ -35,7 +35,7 @@ type ReaderBuilder struct {
 	dbHost      string
 	dbPort      int
 	workerCount int
-	workerFunc  WorkerFunc
+	workerFunc  domain.WorkerFunc
 }
 
 func ReaderBuild() *ReaderBuilder {
@@ -130,9 +130,7 @@ func (b *ReaderBuilder) WithLastId(id *domain.LastIdOptions) *ReaderBuilder {
 	return b
 }
 
-type WorkerFunc func(i int, msg domain.Message)
-
-func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
+func (b *ReaderBuilder) WithWorkerFunc(count int, f domain.WorkerFunc) *ReaderBuilder {
 	b.workerCount = count
 	b.workerFunc = f
 	return b
