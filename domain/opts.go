@@ -129,6 +129,11 @@ type B2Options struct {
 	Compression CompressionOptions
 }
 
+type ReaderTransformerOptions[T any] struct {
+	ReaderOptions
+	Middlewares []TransformMiddlewareFunc[T]
+}
+
 type ServiceOpts interface {
 	GetType() string
 	GetName() string

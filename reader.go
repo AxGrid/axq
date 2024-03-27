@@ -28,15 +28,14 @@ type Reader interface {
 }
 
 type ReaderBuilder struct {
-	opts               domain.ReaderOptions
-	dbName             string
-	dbUser             string
-	dbPassword         string
-	dbHost             string
-	dbPort             int
-	workerCount        int
-	workerFunc         WorkerFunc
-	transformFunctions []service.TransformMiddlewareFunc[any]
+	opts        domain.ReaderOptions
+	dbName      string
+	dbUser      string
+	dbPassword  string
+	dbHost      string
+	dbPort      int
+	workerCount int
+	workerFunc  WorkerFunc
 }
 
 func ReaderBuild() *ReaderBuilder {
@@ -139,11 +138,6 @@ func (b *ReaderBuilder) WithWorkerFunc(count int, f WorkerFunc) *ReaderBuilder {
 	return b
 }
 
-func (b *ReaderBuilder) WithTransformFunctions(functions ...service.TransformMiddlewareFunc[any]) *ReaderBuilder {
-	b.transformFunctions = functions
-	return b
-}
-
 func (b *ReaderBuilder) Build() (Reader, error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
@@ -159,27 +153,6 @@ func (b *ReaderBuilder) Build() (Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	if b.transformFunctions != nil {
-		transformer := service.NewReaderTransformer[any]().WithContext(b.opts.CTX).
-			WithMiddlewares(b.transformFunctions...).
-			WithReader(reader).
-			Build()
-
-		for i := 0; i < b.workerCount; i++ {
-			go func(i int) {
-				for {
-					select {
-					case <-b.opts.CTX.Done():
-						return
-					case msg := <-transformer.C():
-						b.workerFunc(i, msg)
-					}
-				}
-			}(i)
-		}
-		return transformer, err
-	}
-
 	if b.workerFunc != nil {
 		for i := 0; i < b.workerCount; i++ {
 			go func(i int) {
@@ -187,7 +160,6 @@ func (b *ReaderBuilder) Build() (Reader, error) {
 				case <-b.opts.BaseOptions.CTX.Done():
 					return
 				case msg := <-reader.C():
-
 					b.workerFunc(i, msg)
 				}
 			}(i)
