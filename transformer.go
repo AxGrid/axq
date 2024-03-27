@@ -20,7 +20,7 @@ type Transformer[T any] interface {
 type ReaderTransformerBuilder[T any] struct {
 	opts        domain.ReaderTransformerOptions[T]
 	workerCount int
-	workerFunc  domain.WorkerFunc
+	workerFunc  domain.TransformWorkerFunc[T]
 	dbName      string
 	dbUser      string
 	dbPassword  string
@@ -123,7 +123,7 @@ func (b *ReaderTransformerBuilder[T]) WithLastId(id *domain.LastIdOptions) *Read
 	return b
 }
 
-func (b *ReaderTransformerBuilder[T]) WithWorkerFunc(count int, f domain.WorkerFunc) *ReaderTransformerBuilder[T] {
+func (b *ReaderTransformerBuilder[T]) WithWorkerFunc(count int, f domain.TransformWorkerFunc[T]) *ReaderTransformerBuilder[T] {
 	b.workerCount = count
 	b.workerFunc = f
 	return b
@@ -156,7 +156,7 @@ func (b *ReaderTransformerBuilder[T]) Build() (Transformer[T], error) {
 				case <-b.opts.BaseOptions.CTX.Done():
 					return
 				case msg := <-res.C():
-					b.workerFunc(i, msg.Message())
+					b.workerFunc(i, msg)
 				}
 			}(i)
 		}
