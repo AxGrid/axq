@@ -26,6 +26,7 @@ func NewReaderTransformer[T any](opts domain.ReaderTransformerOptions[T]) (*Read
 		})
 	}
 	transformer := axtransform.NewAxTransform[domain.Message, T]().
+		WithContext(opts.ReaderOptions.BaseOptions.CTX).
 		WithMiddlewares(middlewaresFunc...).
 		Build()
 

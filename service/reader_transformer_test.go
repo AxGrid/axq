@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewReaderTransformer(t *testing.T) {
-	middlewares := []domain.TransformMiddlewareFunc[string]{
+	middlewares := []domain.ReaderTransformMiddlewareFunc[string]{
 		func(ctx *axtransform.TransformContext[domain.Message, string]) {
 			ctx.Next()
 		},

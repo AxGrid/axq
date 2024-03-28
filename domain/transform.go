@@ -14,6 +14,7 @@ type WorkerFunc func(i int, msg Message)
 
 type TransformWorkerFunc[T any] func(i int, T any)
 
-type TransformMiddlewareFunc[T any] func(ctx *axtransform.TransformContext[Message, T])
+type ReaderTransformMiddlewareFunc[T any] func(ctx *axtransform.TransformContext[Message, T])
+type WriterTransformMiddlewareFunc[F any] func(ctx *axtransform.TransformContext[F, []byte])
 
 type TransformFunc[T any] func(worker int, t TransformHolder[T])

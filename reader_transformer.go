@@ -13,7 +13,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-type Transformer[T any] interface {
+type ReaderTransformer[T any] interface {
+	C() <-chan domain.TransformHolder[T]
 	Transform(from domain.Message) (T, error)
 }
 
@@ -129,12 +130,12 @@ func (b *ReaderTransformerBuilder[T]) WithWorkerFunc(count int, f domain.Transfo
 	return b
 }
 
-func (b *ReaderTransformerBuilder[T]) WithMiddlewares(middlewares ...domain.TransformMiddlewareFunc[T]) *ReaderTransformerBuilder[T] {
+func (b *ReaderTransformerBuilder[T]) WithMiddlewares(middlewares ...domain.ReaderTransformMiddlewareFunc[T]) *ReaderTransformerBuilder[T] {
 	b.opts.Middlewares = append(b.opts.Middlewares, middlewares...)
 	return b
 }
 
-func (b *ReaderTransformerBuilder[T]) Build() (Transformer[T], error) {
+func (b *ReaderTransformerBuilder[T]) Build() (ReaderTransformer[T], error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
 		connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&parseTime=True&loc=Local", b.dbUser, b.dbPassword, b.dbHost, b.dbPort, b.dbName)

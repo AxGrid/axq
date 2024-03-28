@@ -131,7 +131,12 @@ type B2Options struct {
 
 type ReaderTransformerOptions[T any] struct {
 	ReaderOptions
-	Middlewares []TransformMiddlewareFunc[T]
+	Middlewares []ReaderTransformMiddlewareFunc[T]
+}
+
+type WriterTransformerOptions[F any] struct {
+	WriterOptions
+	Middlewares []WriterTransformMiddlewareFunc[F]
 }
 
 type ServiceOpts interface {
