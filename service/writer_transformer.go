@@ -76,3 +76,7 @@ func (w *WriterTransformer[F]) PushMany(messages []F) error {
 	}
 	return nil
 }
+
+func (w *WriterTransformer[F]) Close() {
+	w.writer.Close()
+}

@@ -2,9 +2,14 @@ package axq
 
 import (
 	"context"
+	"fmt"
 	"github.com/axgrid/axq/domain"
+	"github.com/axgrid/axq/service"
+	"github.com/axgrid/axq/utils"
 	"github.com/rs/zerolog"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type WriterTransformer[T any] interface {
@@ -92,7 +97,19 @@ func (b *WriterTransformerBuilder[T]) WithMiddlewares(middlewares ...domain.Writ
 	return b
 }
 
-func (b *WriterTransformerBuilder[T]) Build() WriterTransformer[T] {
-
-	return nil
+func (b *WriterTransformerBuilder[F]) Build() (WriterTransformer[F], error) {
+	if b.opts.DB.DB == nil {
+		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
+		connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&parseTime=True&loc=Local", b.dbUser, b.dbPassword, b.dbHost, b.dbPort, b.dbName)
+		db, err := gorm.Open(mysql.Open(connectionString), &gorm.Config{Logger: gLogger, DisableForeignKeyConstraintWhenMigrating: true})
+		if err != nil {
+			return nil, err
+		}
+		b.opts.DB.DB = db
+	}
+	res, err := service.NewWriterTransformer[F](b.opts)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
