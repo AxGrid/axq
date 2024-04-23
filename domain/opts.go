@@ -115,11 +115,16 @@ type LastIdOptions struct {
 
 type ArchiverOptions struct {
 	BaseOptions
-	DB        DataBaseOptions
-	B2        B2Options
-	ChunkSize int
-	MaxSize   int
-	MaxCount  int
+	DB             DataBaseOptions
+	B2             B2Options
+	Reader         ReaderOptions
+	ChunkSize      int
+	MaxSize        int
+	MaxCount       int
+	OuterCount     int
+	CleanTimeout   int
+	Intersection   uint64
+	DeprecatedFrom uint64
 }
 
 type B2Options struct {

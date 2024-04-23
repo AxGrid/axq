@@ -3,9 +3,13 @@ module github.com/axgrid/axq
 go 1.20
 
 require (
+	github.com/axgrid/axtransform v0.0.0-20240321090434-11347af1e82e
+	github.com/charmbracelet/bubbletea v0.25.0
+	github.com/charmbracelet/lipgloss v0.10.0
 	github.com/go-errors/errors v1.5.1
 	github.com/golang/protobuf v1.5.3
 	github.com/google/uuid v1.6.0
+	github.com/olekukonko/tablewriter v0.0.5
 	github.com/rs/zerolog v1.32.0
 	github.com/speps/go-hashids v2.0.0+incompatible
 	github.com/stretchr/testify v1.9.0
@@ -18,10 +22,7 @@ require (
 )
 
 require (
-	github.com/axgrid/axtransform v0.0.0-20240321090434-11347af1e82e // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/charmbracelet/bubbletea v0.25.0 // indirect
-	github.com/charmbracelet/lipgloss v0.10.0 // indirect
 	github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-sql-driver/mysql v1.7.0 // indirect
@@ -38,7 +39,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
-	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/pquerna/ffjson v0.0.0-20190930134022-aa0246cd15f7 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

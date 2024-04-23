@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"github.com/go-errors/errors"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"os"
 	"time"
 )
 
@@ -69,4 +71,39 @@ func (G GLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql stri
 			G.Logger.Debug().Str("time", fmt.Sprintf("%.3fms", float64(elapsed.Nanoseconds())/1e6)).Int64("rows", rows).Msg(sql)
 		}
 	}
+}
+
+func GetLogLevel(levelString string) zerolog.Level {
+	switch levelString {
+	default:
+		return zerolog.DebugLevel
+	case "trace":
+		return zerolog.TraceLevel
+	case "info":
+		return zerolog.InfoLevel
+	case "warn":
+		return zerolog.WarnLevel
+	case "err":
+		return zerolog.ErrorLevel
+	case "fatal":
+		return zerolog.FatalLevel
+	}
+}
+
+const LogTimeFormat = "2006-01-02 15:04:05.00000"
+const LogTraceTimeFormat = "2006-01-02 15:04:05.00000"
+
+func InitLogger(level string) zerolog.Logger {
+	if level == "" {
+		level = "debug"
+	}
+	if level == "trace" {
+
+		zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: LogTraceTimeFormat}).Level(GetLogLevel(level))
+	} else {
+		zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: LogTimeFormat}).Level(GetLogLevel(level))
+	}
+	return log.Logger
 }

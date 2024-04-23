@@ -162,6 +162,7 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 		r.lastId = utils.NewMinimalId(opts.LastId.LastId)
 		if r.lastId.Current() > 0 {
 			var blob domain.Blob
+			fmt.Println(r.tableName, r.lastId.Current())
 			err = r.db.Table(r.tableName).Where("? >= from_id AND ? <= to_id", r.lastId.Current(), r.lastId.Current()).First(&blob).Error
 			if err != nil {
 				return nil, err
@@ -269,6 +270,7 @@ func (r *ReaderService) loadDB(index int) error {
 		}
 		if len(batch) == 0 {
 			wlog.Warn().Msg("empty batch")
+			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		for _, blob := range batch {
@@ -464,6 +466,17 @@ func (r *ReaderService) outer(index int) {
 				}
 			}
 			r.counters.Set(m.Id)
+		}
+	}
+}
+
+func (r *ReaderService) cleaner() {
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-time.NewTimer(5 * time.Second).C:
+
 		}
 	}
 }

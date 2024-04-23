@@ -47,7 +47,6 @@ func TestWriterTransformer_Push(t *testing.T) {
 	msg := "message"
 	err = transform.Push(msg)
 	assert.Nil(t, err)
-
 }
 
 func TestWriterTransformer_PushMany(t *testing.T) {

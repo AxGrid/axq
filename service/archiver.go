@@ -42,8 +42,9 @@ type ArchiverService struct {
 	sortChan    chan messageIds
 	sortedIds   []messageIds
 
-	messageList *protobuf.BlobMessageList
-	b2Fid       uint64
+	messageList          *protobuf.BlobMessageList
+	b2Fid                uint64
+	lastDeprecateDeleted uint64
 }
 
 func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
@@ -84,7 +85,7 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.tableName = fmt.Sprintf("axq_lima-%s", opts.Name)
+	r.tableName = fmt.Sprintf("axq_%s", opts.Name)
 	if !r.db.Migrator().HasTable(r.tableName) {
 		opts.Logger.Debug().Str("table", r.tableName).Msg("create table")
 		if err := r.db.Table(r.tableName).AutoMigrate(domain.Blob{}); err != nil {
@@ -124,30 +125,25 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	//TODO compare fid > 0 ( set b2Fid )
 	r.fidCounter, err = NewCounterService(fmt.Sprintf("%s_fid", opts.Name), archiverName, opts.CTX, opts.Logger, r.db)
 	if err != nil {
 		return nil, err
 	}
-
 	fid, err := r.fidCounter.Get()
 	if err != nil {
 		return nil, err
 	}
-
 	if fid > 0 {
 		r.b2Fid = fid
 	}
-
 	readerName := fmt.Sprintf("reader_%s", opts.Name)
 	r.reader, err = NewReaderService(domain.ReaderOptions{
 		BaseOptions: opts.BaseOptions,
 		ReaderName:  readerName,
 		DB:          opts.DB,
 		B2Bucket:    r.b2Bucket,
-		LoaderCount: 10,
-		WaiterCount: 10,
+		LoaderCount: opts.Reader.LoaderCount,
+		WaiterCount: opts.Reader.WaiterCount,
 		BufferSize:  5_000_000,
 		BatchSize:   50,
 		LastId: &domain.LastIdOptions{
@@ -159,8 +155,8 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	}
 	go r.loader(0)
 	go r.sorter()
-
-	for i := 0; i < 10; i++ {
+	go r.cleaner()
+	for i := 0; i < opts.OuterCount; i++ {
 		go r.outer(i)
 	}
 
@@ -340,6 +336,31 @@ func (a *ArchiverService) createBucket(bucketName string) (*backblaze.Bucket, er
 	}
 
 	return bucket, nil
+}
+
+func (a *ArchiverService) cleaner() {
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.NewTimer(time.Duration(a.opts.CleanTimeout) * time.Second).C:
+			a.logger.Info().Uint64("last-id", a.counter.lastId).Msg("cleaner started")
+			if a.counter.lastId < a.opts.DeprecatedFrom {
+				continue
+			}
+			deleteTo := a.counter.lastId - a.opts.DeprecatedFrom
+			if deleteTo > a.reader.lastId.Current()-a.opts.Intersection {
+				deleteTo = a.reader.lastId.Current() - a.opts.Intersection
+			}
+			a.logger.Info().Uint64("delete from", deleteTo).Msg("deprecate counted")
+			if err := a.db.Table(a.tableName).Where("to_id <= ?", deleteTo).Delete(&domain.Blob{}).Error; err != nil {
+				a.logger.Error().Err(err).Msg("err while deleting deprecated data")
+				continue
+			}
+			a.logger.Info().Uint64("to-id", deleteTo).Msg("successfully deleted deprecate data")
+			a.lastDeprecateDeleted = deleteTo
+		}
+	}
 }
 
 func (a *ArchiverService) authorizeB2() {
