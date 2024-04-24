@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
+	"github.com/axgrid/axq/utils"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"math/rand"
@@ -187,7 +188,7 @@ func TestReaderService_sortChain(t *testing.T) {
 		}(i)
 	}
 
-	go r.sorter()
+	go r.sorter(ctx)
 
 	stuckTimer := time.NewTimer(2 * time.Second)
 	var fid uint64 = 0
@@ -264,8 +265,8 @@ func BenchmarkReaderService_loaderDB_single(b *testing.B) {
 	<-ctxt.Done()
 }
 
-func BenchmarkReaderService_multithreading(b *testing.B) {
-
+func TestReaderService_multithreading(t *testing.T) {
+	utils.InitLogger("info")
 	ctx := context.Background()
 	loaders := 10
 	readerOpts := domain.ReaderOptions{
@@ -288,7 +289,7 @@ func BenchmarkReaderService_multithreading(b *testing.B) {
 		WaiterCount: loaders * 2,
 	}
 	r, err := NewReaderService(readerOpts)
-	assert.Nil(b, err)
+	assert.Nil(t, err)
 
 	count := uint64(0)
 	timeout := 10
@@ -358,7 +359,7 @@ func BenchmarkReaderService_sortChain(b *testing.B) {
 
 	timelimit := 1
 	timeout := time.NewTimer(time.Duration(timelimit) * time.Second)
-	go r.sorter()
+	go r.sorter(ctx)
 	<-timeout.C
 
 }

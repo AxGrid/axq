@@ -31,7 +31,6 @@ type ReaderService struct {
 	tableName      string
 	lastId         *utils.MinimalId[uint64]
 	sortIdChan     chan uint64
-	b2LastId       uint64
 	dbFid          uint64
 	b2Fid          uint64
 	fidLock        *FidLock
@@ -191,29 +190,47 @@ func (r *ReaderService) createLoaders(ctx context.Context) {
 		return
 	default:
 		if r.opts.B2.Credentials.ApplicationKey != "" {
-			b2Ctx, b2Cancel := context.WithCancel(context.Background())
-			r.logger.Info().Msg("application key found. starting b2 loaders")
-			wg := sync.WaitGroup{}
-			for i := 0; i < r.opts.LoaderCount; i++ {
-				wg.Add(1)
-				go func(i int) {
-					defer wg.Done()
-					r.loaderB2(i)
-				}(i)
-			}
-			go r.b2Sorter(b2Ctx)
-			r.logger.Info().Msg("waiting b2 loaders work done")
-			wg.Wait()
-			b2Cancel()
-			r.logger.Info().Msg("b2 loaders work done")
+			r.startB2Loaders()
 		}
-
-		r.logger.Info().Msg("starting db loaders")
-		for i := 0; i < r.opts.LoaderCount; i++ {
-			go r.loaderDB(i)
-		}
-		go r.sorter()
+		r.startDBLoaders()
+		r.createLoaders(r.ctx)
 	}
+}
+
+func (r *ReaderService) startB2Loaders() {
+	b2Ctx, b2Cancel := context.WithCancel(context.Background())
+	r.logger.Info().Msg("application key found. starting b2 loaders")
+	wg := sync.WaitGroup{}
+	for i := 0; i < r.opts.LoaderCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r.loaderB2(i)
+		}(i)
+	}
+	go r.b2Sorter(b2Ctx)
+	r.logger.Info().Msg("waiting b2 loaders work done")
+	wg.Wait()
+	b2Cancel()
+	r.logger.Info().Msg("b2 loaders work done")
+}
+
+func (r *ReaderService) startDBLoaders() {
+	dbCtx, dbCancel := context.WithCancel(context.Background())
+	r.logger.Info().Msg("starting db loaders")
+	wg := sync.WaitGroup{}
+	for i := 0; i < r.opts.LoaderCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r.loaderDB(i)
+		}(i)
+	}
+	go r.sorter(dbCtx)
+	r.logger.Info().Msg("db loaders reading database")
+	wg.Wait()
+	dbCancel()
+	r.logger.Warn().Msg("db loaders stopped")
 }
 
 func (r *ReaderService) loaderDB(index int) {
@@ -225,8 +242,8 @@ func (r *ReaderService) loaderDB(index int) {
 			return
 		default:
 			if err := r.loadDB(index); err != nil {
-				wlog.Error().Err(err).Msg("error while loading db")
-				continue
+				wlog.Error().Err(err).Msg("error while loading db. stopping")
+				return
 			}
 		}
 	}
@@ -241,7 +258,7 @@ func (r *ReaderService) loaderB2(index int) {
 			return
 		default:
 			if err := r.loadB2(index); err != nil {
-				//panic(err)
+				wlog.Error().Err(err).Msg("error while loading b2. stopping")
 				return
 			}
 		}
@@ -270,6 +287,14 @@ func (r *ReaderService) loadDB(index int) error {
 		}
 		if len(batch) == 0 {
 			wlog.Warn().Msg("empty batch")
+			// todo should check last id flag
+			var blob domain.Blob
+			if err = r.db.Table(r.tableName).Last(&blob).Error; err != nil {
+				continue
+			}
+			if r.lastId.Current() < blob.ToId {
+				return domain.ErrB2AndDBGap
+			}
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
@@ -375,7 +400,7 @@ func (r *ReaderService) loadB2(index int) error {
 	}
 }
 
-func (r *ReaderService) sorter() {
+func (r *ReaderService) sorter(ctx context.Context) {
 	wlog := r.logger.With().Int("sort-worker", 0).Logger()
 	wlog.Debug().Msg("start sort")
 	waitMap := map[uint64]*protobuf.BlobMessage{}
@@ -383,7 +408,7 @@ func (r *ReaderService) sorter() {
 	go func() {
 		for {
 			select {
-			case <-r.ctx.Done():
+			case <-ctx.Done():
 				return
 			case sortId := <-r.lastId.C():
 				mu.RLock()
@@ -394,7 +419,7 @@ func (r *ReaderService) sorter() {
 	}()
 	for {
 		select {
-		case <-r.ctx.Done():
+		case <-ctx.Done():
 			return
 		case list := <-r.blobListChan:
 			//wlog.Info().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
