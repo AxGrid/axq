@@ -868,7 +868,7 @@ func TestOverlap(t *testing.T) {
 	err = db.Model(&domain.BlobCounter{}).Where("reader_name = ? AND name = ?", "b2arch_fid", "test").Update("id", 0).Error
 	assert.Nil(t, err)
 
-	// Запись 1rк строк
+	// Запись 1кк строк
 	lines := 1000000
 	opts := domain.WriterOptions{
 		BaseOptions: domain.BaseOptions{

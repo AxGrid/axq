@@ -155,3 +155,91 @@ func TestArchiverService_Cleaner(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 0, len(res))
 }
+
+func TestArchiverService_DBAndB2Gap(t *testing.T) {
+	utils.InitLogger("info")
+	db := testDataBase
+	baseOpts := domain.BaseOptions{
+		Name:   "test",
+		Logger: log.Logger,
+		CTX:    context.Background(),
+	}
+
+	//lines := 1000000
+	//writerOpts := domain.WriterOptions{
+	//	BaseOptions: baseOpts,
+	//	DB: domain.DataBaseOptions{
+	//		DB: db,
+	//		Compression: domain.CompressionOptions{
+	//			Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+	//			Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
+	//			EncryptionKey: []byte("12345678901234567890123456789012"),
+	//		},
+	//	},
+	//	PartitionsCount: 4,
+	//	MaxBlobSize:     1000,
+	//}
+	//
+	//w, err := NewWriterService(writerOpts)
+	//if !assert.Nil(t, err) {
+	//	t.Fatal(err)
+	//}
+	//assert.NotNil(t, w)
+	//wg := sync.WaitGroup{}
+	//for i := 0; i < lines; i++ {
+	//	wg.Add(1)
+	//	go func(i int) {
+	//		defer wg.Done()
+	//		err = w.Push([]byte(fmt.Sprintf("test_%d", i)))
+	//		if !assert.Nil(t, err) {
+	//			log.Error().Err(err).Msg("push error")
+	//			panic(err)
+	//		}
+	//	}(i)
+	//}
+	//wg.Wait()
+	//return
+
+	dbOpts := domain.DataBaseOptions{
+		DB: db,
+		Compression: domain.CompressionOptions{
+			Compression:   domain.BlobCompression(protobuf.BlobCompression_BLOB_COMPRESSION_GZIP),
+			Encryption:    domain.BlobEncryption(protobuf.BlobEncryption_BLOB_ENCRYPTION_AES),
+			EncryptionKey: []byte("12345678901234567890123456789012"),
+		},
+	}
+	b2Opts := domain.B2Options{
+		Endpoint: b2Endpoint,
+		Credentials: backblaze.Credentials{
+			KeyID:          b2KeyId,
+			ApplicationKey: b2AppKey,
+		},
+	}
+
+	archiverOpts := domain.ArchiverOptions{
+		BaseOptions: baseOpts,
+		DB:          dbOpts,
+		B2:          b2Opts,
+		Reader: domain.ReaderOptions{
+			DB:          dbOpts,
+			B2:          b2Opts,
+			ReaderName:  "archiver_reader",
+			BatchSize:   50,
+			BufferSize:  100_000,
+			LoaderCount: 3,
+			WaiterCount: 3,
+		},
+		ChunkSize:      1000,
+		MaxSize:        100_000,
+		MaxCount:       100_000,
+		OuterCount:     3,
+		CleanTimeout:   600,
+		DeprecatedFrom: 2000,
+		Intersection:   1500,
+	}
+
+	a, err := NewArchiverService(archiverOpts)
+	assert.Nil(t, err)
+	assert.NotNil(t, a)
+	<-time.NewTimer(60 * time.Second).C
+}

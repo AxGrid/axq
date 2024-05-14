@@ -99,6 +99,7 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 		batchSize:    opts.BatchSize,
 		ctx:          ctx,
 		cancelFunc:   cancelFn,
+		b2Bucket:     opts.B2Bucket,
 	}
 	var err error
 	if opts.DB.Compression.Encryption == domain.BLOB_ENCRYPTION_AES {
@@ -161,7 +162,6 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 		r.lastId = utils.NewMinimalId(opts.LastId.LastId)
 		if r.lastId.Current() > 0 {
 			var blob domain.Blob
-			fmt.Println(r.tableName, r.lastId.Current())
 			err = r.db.Table(r.tableName).Where("? >= from_id AND ? <= to_id", r.lastId.Current(), r.lastId.Current()).First(&blob).Error
 			if err != nil {
 				return nil, err
@@ -185,16 +185,18 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 
 func (r *ReaderService) createLoaders(ctx context.Context) {
 	r.logger.Info().Msg("creating loaders")
-	select {
-	case <-ctx.Done():
-		return
-	default:
-		if r.opts.B2.Credentials.ApplicationKey != "" {
-			r.startB2Loaders()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			if r.opts.B2.Credentials.ApplicationKey != "" {
+				r.startB2Loaders()
+			}
+			r.startDBLoaders()
 		}
-		r.startDBLoaders()
-		r.createLoaders(r.ctx)
 	}
+
 }
 
 func (r *ReaderService) startB2Loaders() {
@@ -286,16 +288,15 @@ func (r *ReaderService) loadDB(index int) error {
 			continue
 		}
 		if len(batch) == 0 {
-			wlog.Warn().Msg("empty batch")
-			// todo should check last id flag
 			var blob domain.Blob
 			if err = r.db.Table(r.tableName).Last(&blob).Error; err != nil {
 				continue
 			}
+			wlog.Warn().Uint64("last-id", r.lastId.Current()).Uint64("last blob to-id", blob.ToId).Msg("empty batch")
 			if r.lastId.Current() < blob.ToId {
 				return domain.ErrB2AndDBGap
 			}
-			time.Sleep(250 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		for _, blob := range batch {
@@ -352,7 +353,7 @@ func (r *ReaderService) loadB2(index int) error {
 			wlog.Error().Err(err).Uint64("fid", fid).Msg("fail to get filename")
 			continue
 		}
-		wlog.Debug().Uint64("fid", fid).Str("filename", filename).Msg("try to download file")
+		wlog.Info().Uint64("fid", fid).Str("filename", filename).Msg("try to download file")
 		content, err := utils.DownloadFileByName(r.b2Bucket.Name, r.opts.B2.Endpoint, filename)
 		if err != nil {
 			if errors.Is(domain.ErrB2FileNotFound, err) {
@@ -369,7 +370,7 @@ func (r *ReaderService) loadB2(index int) error {
 			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob error")
 			continue
 		}
-		wlog.Debug().Uint64("fid", fid).Str("filename", filename).Msg("successfully downloaded file")
+		wlog.Info().Uint64("fid", fid).Str("filename", filename).Msg("successfully downloaded file")
 		switch blob.Encryption {
 		case domain.BLOB_ENCRYPTION_AES:
 			content, err = r.dbAes.Decrypt(content)
@@ -395,7 +396,7 @@ func (r *ReaderService) loadB2(index int) error {
 		list.Fid = blob.Fid
 		wlog.Debug().Uint64("fid", list.Fid).Msg("trying send to blob list chan")
 		r.blobListChan <- &list
-		wlog.Info().Int("msg count", len(list.Messages)).Uint64("fid", list.Fid).Msg("success sending to blob list chan")
+		wlog.Debug().Int("msg count", len(list.Messages)).Uint64("fid", list.Fid).Msg("success sending to blob list chan")
 		return nil
 	}
 }
@@ -422,7 +423,7 @@ func (r *ReaderService) sorter(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case list := <-r.blobListChan:
-			//wlog.Info().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
+			wlog.Info().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
 			for _, msg := range list.Messages {
 				mu.Lock()
 				waitMap[msg.Id] = msg
@@ -474,6 +475,9 @@ func (r *ReaderService) outer(index int) {
 		case <-r.ctx.Done():
 			return
 		case m := <-r.bufferChan:
+			if m == nil {
+				continue
+			}
 			wlog.Debug().Uint64("id", m.Id).Msg("receive from buffer chan")
 			holder := &messageHolder{
 				id:      m.Id,

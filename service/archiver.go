@@ -121,10 +121,6 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		return nil, err
 	}
 
-	id, err := r.counter.Get()
-	if err != nil {
-		return nil, err
-	}
 	r.fidCounter, err = NewCounterService(fmt.Sprintf("%s_fid", opts.Name), archiverName, opts.CTX, opts.Logger, r.db)
 	if err != nil {
 		return nil, err
@@ -141,14 +137,12 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		BaseOptions: opts.BaseOptions,
 		ReaderName:  readerName,
 		DB:          opts.DB,
+		B2:          opts.B2,
 		B2Bucket:    r.b2Bucket,
 		LoaderCount: opts.Reader.LoaderCount,
 		WaiterCount: opts.Reader.WaiterCount,
 		BufferSize:  5_000_000,
 		BatchSize:   50,
-		LastId: &domain.LastIdOptions{
-			LastId: id,
-		},
 	})
 	if err != nil {
 		return nil, err
@@ -174,7 +168,7 @@ func (a *ArchiverService) loader(index int) {
 			if msg.Id() <= a.counter.lastId {
 				continue
 			}
-			if msg.Id()%1000 == 0 {
+			if msg.Id()%10000 == 0 {
 				wlog.Info().Msgf("reader %d", msg.Id())
 			}
 
