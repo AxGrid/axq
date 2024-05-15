@@ -40,6 +40,7 @@ type ReaderService struct {
 	outChan        chan domain.Message
 	db             *gorm.DB
 	batchSize      uint64
+	nextBatchSize  uint64
 	b2Bucket       *backblaze.Bucket
 	b2Auth         string
 	hashId         *hashids.HashID
@@ -90,16 +91,17 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 	}
 	ctx, cancelFn := context.WithCancel(opts.CTX)
 	r := &ReaderService{
-		opts:         opts,
-		logger:       opts.Logger.With().Str("name", opts.Name).Str("reader", opts.ReaderName).Logger(),
-		blobListChan: make(chan *protobuf.BlobMessageList, opts.LoaderCount*opts.LoaderCount),
-		bufferChan:   make(chan *protobuf.BlobMessage, opts.BufferSize),
-		outChan:      make(chan domain.Message, opts.WaiterCount),
-		db:           opts.DB.DB,
-		batchSize:    opts.BatchSize,
-		ctx:          ctx,
-		cancelFunc:   cancelFn,
-		b2Bucket:     opts.B2Bucket,
+		opts:          opts,
+		logger:        opts.Logger.With().Str("name", opts.Name).Str("reader", opts.ReaderName).Logger(),
+		blobListChan:  make(chan *protobuf.BlobMessageList, opts.LoaderCount*opts.LoaderCount),
+		bufferChan:    make(chan *protobuf.BlobMessage, opts.BufferSize),
+		outChan:       make(chan domain.Message, opts.WaiterCount),
+		db:            opts.DB.DB,
+		batchSize:     opts.BatchSize,
+		nextBatchSize: opts.BatchSize,
+		ctx:           ctx,
+		cancelFunc:    cancelFn,
+		b2Bucket:      opts.B2Bucket,
 	}
 	var err error
 	if opts.DB.Compression.Encryption == domain.BLOB_ENCRYPTION_AES {
@@ -287,17 +289,20 @@ func (r *ReaderService) loadDB(index int) error {
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
-		if len(batch) == 0 {
-			var blob domain.Blob
-			if err = r.db.Table(r.tableName).Last(&blob).Error; err != nil {
+		if len(batch) != int(r.batchSize) {
+			if len(batch) == 0 {
+				var blob domain.Blob
+				if err = r.db.Table(r.tableName).Last(&blob).Error; err != nil {
+					continue
+				}
+				wlog.Warn().Uint64("last-id", r.lastId.Current()).Uint64("last blob to-id", blob.ToId).Msg("empty batch")
+				if r.dbFid < blob.FID {
+					return domain.ErrB2AndDBGap
+				}
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
-			wlog.Warn().Uint64("last-id", r.lastId.Current()).Uint64("last blob to-id", blob.ToId).Msg("empty batch")
-			if r.lastId.Current() < blob.ToId {
-				return domain.ErrB2AndDBGap
-			}
-			time.Sleep(500 * time.Millisecond)
-			continue
+			r.nextBatchSize -= uint64(len(batch))
 		}
 		for _, blob := range batch {
 			wlog.Debug().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
@@ -329,6 +334,13 @@ func (r *ReaderService) loadDB(index int) error {
 			r.blobListChan <- &list
 			wlog.Debug().Int64("delta-time", r.deltaTime).Int64("delta-count", r.deltaTimeCount).Int64("ratio", r.deltaTime/r.deltaTimeCount).Uint64("fid", list.Fid).Int("msg count", len(list.Messages)).Msg("success sending to blob list chan")
 		}
+		if len(batch) != int(r.batchSize) {
+			if r.nextBatchSize == 0 {
+				r.nextBatchSize = r.batchSize
+				return nil
+			}
+			continue
+		}
 		return nil
 	}
 }
@@ -341,7 +353,7 @@ func (r *ReaderService) getData(fid uint64, res *[]domain.Blob) error {
 		atomic.AddInt64(&r.deltaTime, time.Since(t).Milliseconds())
 		atomic.AddInt64(&r.deltaTimeCount, 1)
 	}()
-	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ? AND fid <= ?", fid-r.batchSize, fid).Limit(int(r.batchSize)).Find(res).Error
+	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ? AND fid <= ?", fid-r.nextBatchSize, fid).Find(res).Error
 }
 
 func (r *ReaderService) loadB2(index int) error {
@@ -494,18 +506,8 @@ func (r *ReaderService) outer(index int) {
 					break
 				}
 			}
+			wlog.Info().Uint64("last-id", m.Id).Msg("set last-id")
 			r.counters.Set(m.Id)
-		}
-	}
-}
-
-func (r *ReaderService) cleaner() {
-	for {
-		select {
-		case <-r.ctx.Done():
-			return
-		case <-time.NewTimer(5 * time.Second).C:
-
 		}
 	}
 }

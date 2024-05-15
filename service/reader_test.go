@@ -12,6 +12,9 @@ import (
 	"github.com/axgrid/axq/utils"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -404,4 +407,121 @@ func TestReaderService_getData(t *testing.T) {
 	}
 	<-ctxt.Done()
 	log.Logger.Info().Int64("delta-time", r.deltaTime).Int64("delta-count", r.deltaTimeCount).Int64("ratio-ms", r.deltaTime/r.deltaTimeCount).Uint64("last fid", r.dbFid).Msg("test finished")
+}
+
+func TestReaderService_C(t *testing.T) {
+	ctx := context.Background()
+	l := utils.InitLogger("info")
+	//l := zerolog.Nop()
+	gLogger := utils.NewGLogger(l, true).LogMode(logger.Warn)
+	connectionString := fmt.Sprintf("root:@tcp(localhost:3306)/axq?charset=utf8&parseTime=True&loc=Local")
+	db, err := gorm.Open(mysql.Open(connectionString), &gorm.Config{Logger: gLogger})
+	if err != nil {
+		panic(err)
+	}
+	assert.Nil(t, err)
+
+	w, err := NewWriterService(domain.WriterOptions{
+		BaseOptions: domain.BaseOptions{
+			CTX:    ctx,
+			Logger: l,
+			Name:   "global_test",
+		},
+		DB: domain.DataBaseOptions{
+			DB: db,
+			Compression: domain.CompressionOptions{
+				Compression: domain.BLOB_COMPRESSION_GZIP,
+			},
+		},
+		PartitionsCount: 4,
+		MaxBlobSize:     10000,
+	})
+	go func() {
+		for {
+			time.Sleep(time.Millisecond * 1000)
+			err = w.Push([]byte("test"))
+			assert.Nil(t, err)
+		}
+	}()
+
+	readerOpts := domain.ReaderOptions{
+		BaseOptions: domain.BaseOptions{
+			CTX:    ctx,
+			Logger: l,
+			Name:   "global_test",
+		},
+		DB: domain.DataBaseOptions{
+			DB: db,
+			Compression: domain.CompressionOptions{
+				Compression: domain.BLOB_COMPRESSION_GZIP,
+			},
+		},
+		ReaderName:  "global_test_reader",
+		LoaderCount: 1,
+		WaiterCount: 1,
+		BufferSize:  100_000,
+		BatchSize:   10,
+	}
+	r, err := NewReaderService(readerOpts)
+	assert.Nil(t, err)
+
+	for {
+		select {
+		case msg := <-r.C():
+			fmt.Println(msg.Id(), msg)
+			msg.Done()
+		}
+	}
+
+	//r := &mockReader{
+	//	ctx:           ctx,
+	//	db:            db,
+	//	tableName:     "axq_global_test",
+	//	batchSize:     10,
+	//	nextBatchSize: 10,
+	//}
+	//
+	//for {
+	//	// 0 -> 10 (поиск от 1 до 10)
+	//	fid := atomic.AddUint64(&r.dbFid, r.batchSize)
+	//	var batch []domain.Blob
+	//	for {
+	//		err = r.testGetData(fid, &batch)
+	//		assert.Nil(t, err)
+	//		fmt.Println("from", fid-r.nextBatchSize, "to", fid, "found", len(batch), "next batch", r.nextBatchSize)
+	//		if len(batch) != int(r.batchSize) {
+	//			if len(batch) == 0 {
+	//				time.Sleep(500 * time.Millisecond)
+	//				continue
+	//			}
+	//			r.nextBatchSize -= uint64(len(batch))
+	//		}
+	//		fmt.Println("processing", len(batch))
+	//		if len(batch) != int(r.batchSize) {
+	//			if r.nextBatchSize == 0 {
+	//				r.nextBatchSize = r.batchSize
+	//				break
+	//			}
+	//			time.Sleep(100 * time.Millisecond)
+	//			continue
+	//		}
+	//		break
+	//	}
+	//	time.Sleep(500 * time.Millisecond)
+	//}
+}
+
+type mockReader struct {
+	ctx           context.Context
+	db            *gorm.DB
+	dbFid         uint64
+	tableName     string
+	batchSize     uint64
+	nextBatchSize uint64
+}
+
+func (r *mockReader) testGetData(fid uint64, res *[]domain.Blob) error {
+	localCtx, cancelFn := context.WithTimeout(r.ctx, time.Second*5)
+	defer cancelFn()
+	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ? AND fid <= ?", fid-r.nextBatchSize, fid).Find(res).Error
 }
