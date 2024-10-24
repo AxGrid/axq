@@ -63,7 +63,8 @@ func TestNewReaderService_read(t *testing.T) {
 				EncryptionKey: []byte("12345678901234567890123456789012"),
 			},
 		},
-		MaxBlobSize: 10000,
+		MaxBlobSize:     10000,
+		PartitionsCount: 2,
 	}
 	w, err := NewWriterService(opts)
 	if !assert.Nil(t, err) {

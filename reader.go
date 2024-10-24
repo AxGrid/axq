@@ -38,7 +38,7 @@ type ReaderBuilder struct {
 	workerFunc  domain.WorkerFunc
 }
 
-func ReaderBuild() *ReaderBuilder {
+func NewReader() *ReaderBuilder {
 	return &ReaderBuilder{
 		dbName:     "axq",
 		dbUser:     "root",

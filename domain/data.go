@@ -21,5 +21,5 @@ type BlobCounter struct {
 }
 
 func (b *BlobCounter) TableName() string {
-	return "counters"
+	return "axq_counters"
 }

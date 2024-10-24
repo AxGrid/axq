@@ -30,7 +30,7 @@ type ArchiverBuilder struct {
 	dbPort     int
 }
 
-func ArchiverBuild() *ArchiverBuilder {
+func NewArchiver() *ArchiverBuilder {
 	return &ArchiverBuilder{
 		dbName:     "axq",
 		dbUser:     "root",

@@ -29,7 +29,7 @@ type ReaderTransformerBuilder[T any] struct {
 	dbPort      int
 }
 
-func ReaderTransformerBuild[T any]() *ReaderTransformerBuilder[T] {
+func NewReaderTransformer[T any]() *ReaderTransformerBuilder[T] {
 	ctx := context.Background()
 	return &ReaderTransformerBuilder[T]{
 		dbName:     "axq",

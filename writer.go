@@ -39,7 +39,7 @@ type WriterBuilder struct {
 	dbPort     int
 }
 
-func WriterBuild() *WriterBuilder {
+func NewWriter() *WriterBuilder {
 	return &WriterBuilder{
 		dbUser:     "root",
 		dbPassword: "",

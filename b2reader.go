@@ -17,7 +17,7 @@ type B2ReaderBuilder struct {
 	opts domain.B2ReaderOptions
 }
 
-func B2ReaderBuild() *B2ReaderBuilder {
+func NewB2Reader() *B2ReaderBuilder {
 	return &B2ReaderBuilder{
 		opts: domain.B2ReaderOptions{
 			BaseOptions: domain.BaseOptions{

@@ -20,6 +20,7 @@ type BinLog struct {
 }
 
 func main() {
+	axq.NewWriter()
 	dbParams := dbParamsFlags()
 	connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&parseTime=True&loc=Local",
 		dbParams.User, dbParams.Password, dbParams.Host, dbParams.Port, dbParams.DBName,
@@ -39,7 +40,7 @@ func main() {
 	dbInfo.DBName = dbParams.DBName
 
 	var g1 []domain.Service
-	w1, err := axq.WriterBuild().WithDB(db).WithPartitionsCount(4).Build()
+	w1, err := axq.NewWriter().WithDB(db).WithPartitionsCount(4).Build()
 	if err != nil {
 		panic(err)
 	}
@@ -58,17 +59,17 @@ func main() {
 	//}()
 	//time.Sleep(10 * time.Second)
 
-	r1, err := axq.ReaderBuild().WithDB(db).WithReaderName("not_default_name").Build()
+	r1, err := axq.NewReader().WithDB(db).WithReaderName("not_default_name").Build()
 	if err != nil {
 		panic(err)
 	}
 
-	r2, err := axq.ReaderBuild().WithDB(db).Build()
+	r2, err := axq.NewReader().WithDB(db).WithBufferSize(100_000).Build()
 	if err != nil {
 		panic(err)
 	}
 
-	r3, err := axq.ReaderBuild().WithDB(db).Build()
+	r3, err := axq.NewReader().WithDB(db).Build()
 	if err != nil {
 		panic(err)
 	}

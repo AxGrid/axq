@@ -14,7 +14,7 @@ func main() {
         panic(err)
     }
 
-    w, err := axq.Writer().
+    w, err := axq.NewWriter().
         WithName("writer_name").
         WithDB(db).
         // MaxBlobSize specify max messages in blob (default 10000)
@@ -46,7 +46,7 @@ func main() {
 		panic(err)
 	}
 
-    r, err := axq.Reader().
+    r, err := axq.NewReader().
         WithName("reader_name").
         WithDB(db).
         // LoaderCount start N loader workers
@@ -84,7 +84,7 @@ func main() {
 		ApplicationKey: os.Getenv("B2_APP_KEY"),
 		KeyID:          os.Getenv("B2_KEY_ID"),
 	}
-	a, err := axq.Archiver().
+	a, err := axq.NewArchiver().
 		WithName("archiver_name").
 		WithDB(db).
 		WithB2Credentials(creds).
@@ -111,7 +111,7 @@ func main() {
         ApplicationKey: os.Getenv("B2_APP_KEY"),
         KeyID:          os.Getenv("B2_KEY_ID"),
     }
-    r, err := axq.B2Reader().
+    r, err := axq.NewB2Reader().
         WithName("reader_name").
         // LoaderCount start N loader workers
         WithLoaderCount(2).

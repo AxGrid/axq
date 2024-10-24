@@ -353,7 +353,7 @@ func (r *ReaderService) getData(fid uint64, res *[]domain.Blob) error {
 		atomic.AddInt64(&r.deltaTime, time.Since(t).Milliseconds())
 		atomic.AddInt64(&r.deltaTimeCount, 1)
 	}()
-	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ? AND fid <= ?", fid-r.nextBatchSize, fid).Find(res).Error
+	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ?", fid-r.nextBatchSize).Order("fid").Limit(int(r.batchSize)).Find(res).Error
 }
 
 func (r *ReaderService) loadB2(index int) error {
@@ -502,6 +502,7 @@ func (r *ReaderService) outer(index int) {
 				result := <-holder.ack
 				if result.err != nil {
 					wlog.Error().Err(result.err).Uint64("id", holder.id).Msg("retry message")
+					time.Sleep(500 * time.Millisecond)
 				} else {
 					break
 				}
