@@ -14,7 +14,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"testing"
-	"time"
 )
 
 func TestReader_Pop(t *testing.T) {
@@ -66,22 +65,32 @@ func TestReader_Pop_WorkerFunc(t *testing.T) {
 	testId := uuid.New()
 	testTableName := fmt.Sprintf("test_table_%x", testId[0:8])
 	testReaderName := fmt.Sprintf("test_reader_%x", testId[0:8])
-	_, err = NewReader().
+	count := 1000
+	uniqueMap := make(map[uint64]bool)
+	r, err := NewReader().
 		WithDB(db).
 		WithName(testTableName).
 		WithReaderName(testReaderName).
 		WithLogger(l).
 		WithWorkerFunc(3, func(i int, msg domain.Message) {
-			zeroLogger.Info().Int("worker-id", i).Msg("worker start")
+			zeroLogger.Info().Int("worker-id", i).Msg("worker process msg")
 			fmt.Println(msg.Id())
 			msg.Done()
+			uniqueMap[msg.Id()] = true
 		}).
 		Build()
 	assert.Nil(t, err)
-	count := 1000
 	err = prepareData(db, testTableName, count)
 	assert.Nil(t, err)
-	time.Sleep(3 * time.Second)
+	for {
+		lastId, _ := r.LastID()
+		if lastId == uint64(count) {
+			break
+		}
+	}
+	for k, v := range uniqueMap {
+		assert.Truef(t, v, fmt.Sprintf("not exists %d", k))
+	}
 }
 
 func prepareData(db *gorm.DB, tableName string, count int) error {
