@@ -6,12 +6,15 @@ import (
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+	zeroLogger "github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"testing"
+	"time"
 )
 
 func TestReader_Pop(t *testing.T) {
@@ -50,6 +53,35 @@ func TestReader_Pop(t *testing.T) {
 	for k, v := range uniqueMap {
 		assert.Truef(t, v, fmt.Sprintf("not exists %d", k))
 	}
+}
+
+func TestReader_Pop_WorkerFunc(t *testing.T) {
+	connectionString := "root:@tcp(localhost:3306)/axq_queue?charset=utf8&parseTime=True&loc=Local"
+	db, err := gorm.Open(mysql.Open(connectionString), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	assert.Nil(t, err)
+	l := zerolog.Nop()
+
+	testId := uuid.New()
+	testTableName := fmt.Sprintf("test_table_%x", testId[0:8])
+	testReaderName := fmt.Sprintf("test_reader_%x", testId[0:8])
+	_, err = NewReader().
+		WithDB(db).
+		WithName(testTableName).
+		WithReaderName(testReaderName).
+		WithLogger(l).
+		WithWorkerFunc(3, func(i int, msg domain.Message) {
+			zeroLogger.Info().Int("worker-id", i).Msg("worker start")
+			fmt.Println(msg.Id())
+			msg.Done()
+		}).
+		Build()
+	assert.Nil(t, err)
+	count := 1000
+	err = prepareData(db, testTableName, count)
+	assert.Nil(t, err)
+	time.Sleep(3 * time.Second)
 }
 
 func prepareData(db *gorm.DB, tableName string, count int) error {

@@ -154,11 +154,13 @@ func (b *ReaderBuilder) Build() (Reader, error) {
 	if b.workerFunc != nil {
 		for i := 0; i < b.workerCount; i++ {
 			go func(i int) {
-				select {
-				case <-b.opts.BaseOptions.CTX.Done():
-					return
-				case msg := <-reader.C():
-					b.workerFunc(i, msg)
+				for {
+					select {
+					case <-b.opts.BaseOptions.CTX.Done():
+						return
+					case msg := <-reader.C():
+						b.workerFunc(i, msg)
+					}
 				}
 			}(i)
 		}
