@@ -77,7 +77,7 @@ func TestWriterService_Benchmark(t *testing.T) {
 			Compression: domain.CompressionOptions{},
 		},
 		PartitionsCount: 3,
-		MaxBlobSize:     100000,
+		MaxBlobSize:     100_000,
 	}
 
 	w, err := NewWriterService(opts)

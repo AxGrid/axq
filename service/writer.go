@@ -84,6 +84,7 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	}
 	go w.save()
 	go w.create()
+	go w.cutter()
 	go w.countPerformance()
 	return w, nil
 }
@@ -110,7 +111,6 @@ func (w *WriterService) Push(message []byte) error {
 	return <-holder.response
 }
 
-// TODO: вот его переделать нужно будет
 func (w *WriterService) PushMany(messages [][]byte) error {
 	if w.stopped {
 		return errors.New("writer stopped")
@@ -184,6 +184,32 @@ func (w *WriterService) LastID() (uint64, error) {
 	}
 }
 
+func (w *WriterService) MinimalFID() (uint64, error) {
+	var blob domain.Blob
+	if err := w.db.Table(w.tableName).Order("fid asc").First(&blob).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		} else {
+			return 0, err
+		}
+	} else {
+		return blob.FID, nil
+	}
+}
+
+func (w *WriterService) MinimalID() (uint64, error) {
+	var blob domain.Blob
+	if err := w.db.Table(w.tableName).Order("fid asc").First(&blob).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		} else {
+			return 0, err
+		}
+	} else {
+		return blob.FromId, nil
+	}
+}
+
 func (w *WriterService) GetOpts() domain.ServiceOpts {
 	return &w.opts
 }
@@ -204,7 +230,6 @@ func (w *WriterService) save() {
 		case data := <-w.inChan:
 			blobList := make([]*dataHolder, 0, w.opts.MaxBlobSize)
 			blobList = append(blobList, data)
-			// TODO min
 			for i := 1; i < min(w.opts.MaxBlobSize, len(w.inChan)); i++ {
 				data = <-w.inChan
 				blobList = append(blobList, data)
@@ -295,6 +320,28 @@ func (w *WriterService) create() {
 			w.logger.Debug().Int("size", len(blobData.blob.Message)).Uint64("fid", blobData.blob.FID).Uint64("from-id", blobData.blob.FromId).Uint64("to-id", blobData.blob.ToId).Int("total", blobData.blob.Total).Msg("create blob")
 			for _, data := range blobData.dataList {
 				data.response <- nil
+			}
+		}
+	}
+}
+
+func (w *WriterService) cutter() {
+	t := time.NewTicker(w.opts.CutFrequency)
+	defer t.Stop()
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-t.C:
+			lastId, err := w.LastID()
+			if err != nil {
+				continue
+			}
+			if lastId <= uint64(w.opts.CutSize) {
+				continue
+			}
+			if err = w.db.Table(w.tableName).Where("to_id < ?", lastId-uint64(w.opts.CutSize)).Delete(&domain.Blob{}).Error; err != nil {
+				continue
 			}
 		}
 	}

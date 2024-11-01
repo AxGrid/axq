@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
+	"time"
 )
 
 const (
@@ -58,6 +59,8 @@ type WriterOptions struct {
 	DB              DataBaseOptions
 	PartitionsCount int
 	MaxBlobSize     int
+	CutSize         int
+	CutFrequency    time.Duration
 }
 
 func (w *WriterOptions) GetType() string {
