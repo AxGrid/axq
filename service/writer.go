@@ -84,7 +84,9 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	}
 	go w.save()
 	go w.create()
-	go w.cutter()
+	if opts.CutSize > 0 {
+		go w.cutter()
+	}
 	go w.countPerformance()
 	return w, nil
 }
