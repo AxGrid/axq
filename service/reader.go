@@ -289,6 +289,7 @@ func (r *ReaderService) loadDB(index int) error {
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
+		wlog.Info().Int("batch-len", len(batch)).Msg("read batch")
 		if len(batch) != int(r.batchSize) {
 			if len(batch) == 0 {
 				var blob domain.Blob
@@ -296,9 +297,6 @@ func (r *ReaderService) loadDB(index int) error {
 					continue
 				}
 				wlog.Warn().Uint64("last-id", r.lastId.Current()).Uint64("last blob to-id", blob.ToId).Msg("empty batch")
-				if r.dbFid < blob.FID {
-					return domain.ErrB2AndDBGap
-				}
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
@@ -424,9 +422,10 @@ func (r *ReaderService) sorter(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case sortId := <-r.lastId.C():
-				mu.RLock()
+				mu.Lock()
 				r.bufferChan <- waitMap[sortId]
-				mu.RUnlock()
+				delete(waitMap, sortId)
+				mu.Unlock()
 			}
 		}
 	}()
