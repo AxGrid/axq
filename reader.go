@@ -21,6 +21,8 @@ type Reader interface {
 	Pop() domain.Message
 	C() <-chan domain.Message
 	GetOpts() domain.ServiceOpts
+	GetName() string
+	GetWriterName() string
 	Counter() (uint64, error)
 	LastFID() (uint64, error)
 	LastID() (uint64, error)

@@ -72,3 +72,20 @@ func TestWriter_WithCut(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 0, len(blobs))
 }
+
+func TestWriter_UniqueNameAndUUID(t *testing.T) {
+	connectionString := "root:@tcp(localhost:3306)/axq_queue?charset=utf8&parseTime=True&loc=Local"
+	db, err := gorm.Open(mysql.Open(connectionString), &gorm.Config{})
+
+	testId := uuid.New()
+	wr, err := NewWriter().
+		WithDB(db).
+		WithName(fmt.Sprintf("test_writer_%x", testId[0:8])).
+		//WithName("test_writer_7d365933c3df4e03").
+		WithUUID(testId).
+		WithCutFrequency(time.Second).
+		WithCutSize(1000).
+		Build()
+	assert.Nil(t, err)
+	assert.NotNil(t, wr)
+}

@@ -49,6 +49,27 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 		ctx:            ctx,
 		cancelFunc:     cancelFunc,
 	}
+	if err := w.db.AutoMigrate(&domain.Allow{}); err != nil {
+		return nil, err
+	}
+	var allow domain.Allow
+	if err := w.db.Where("writer_name = ?", opts.Name).First(&allow).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			allow = domain.Allow{
+				UUID:       opts.UUID,
+				WriterName: opts.Name,
+			}
+			if err = w.db.Create(&allow).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	if allow.UUID != opts.UUID {
+		return nil, errors.New("writer name not match")
+	}
 	if opts.DB.Compression.Encryption == domain.BLOB_ENCRYPTION_AES {
 		if len(opts.DB.Compression.EncryptionKey) != 32 {
 			return nil, errors.New("invalid encryption key size")
@@ -214,6 +235,10 @@ func (w *WriterService) MinimalID() (uint64, error) {
 
 func (w *WriterService) GetOpts() domain.ServiceOpts {
 	return &w.opts
+}
+
+func (w *WriterService) GetName() string {
+	return w.opts.Name
 }
 
 func (w *WriterService) Counter() (uint64, error) {

@@ -57,6 +57,14 @@ func (r *ReaderService) GetOpts() domain.ServiceOpts {
 	return &r.opts
 }
 
+func (r *ReaderService) GetName() string {
+	return r.opts.ReaderName
+}
+
+func (r *ReaderService) GetWriterName() string {
+	return r.opts.Name
+}
+
 func (r *ReaderService) Counter() (uint64, error) {
 	return r.counters.Get()
 }

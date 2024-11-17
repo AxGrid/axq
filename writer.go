@@ -11,6 +11,7 @@ import (
 	"github.com/axgrid/axq/service"
 	"github.com/axgrid/axq/utils"
 	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -25,6 +26,7 @@ type Writer interface {
 	PushProtoMany(messages []proto.Message) error
 	Close()
 	GetOpts() domain.ServiceOpts
+	GetName() string
 	Counter() (uint64, error)
 	LastFID() (uint64, error)
 	LastID() (uint64, error)
@@ -111,6 +113,11 @@ func (b *WriterBuilder) WithCutFrequency(t time.Duration) *WriterBuilder {
 
 func (b *WriterBuilder) WithCutSize(size int) *WriterBuilder {
 	b.opts.CutSize = size
+	return b
+}
+
+func (b *WriterBuilder) WithUUID(uid uuid.UUID) *WriterBuilder {
+	b.opts.UUID = uid
 	return b
 }
 

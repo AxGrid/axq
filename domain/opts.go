@@ -6,6 +6,7 @@ package domain
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
@@ -61,6 +62,7 @@ type WriterOptions struct {
 	MaxBlobSize     int
 	CutSize         int
 	CutFrequency    time.Duration
+	UUID            uuid.UUID
 }
 
 func (w *WriterOptions) GetType() string {
