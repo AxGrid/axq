@@ -64,8 +64,8 @@ func NewReaderTransformer[T any](opts domain.ReaderTransformerOptions[T]) (*Read
 	return res, nil
 }
 
-func (t *ReaderTransformer[T]) Transform(from domain.Message) (T, error) {
-	return t.transformer.Transform(from)
+func (r *ReaderTransformer[T]) Transform(from domain.Message) (T, error) {
+	return r.transformer.Transform(from)
 }
 
 type transformHolder[T any] struct {

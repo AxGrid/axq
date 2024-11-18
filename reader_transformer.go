@@ -164,3 +164,11 @@ func (b *ReaderTransformerBuilder[T]) Build() (ReaderTransformer[T], error) {
 	}
 	return res, nil
 }
+
+func (b *ReaderTransformerBuilder[T]) ShouldBuild() ReaderTransformer[T] {
+	res, err := b.Build()
+	if err != nil {
+		panic(err)
+	}
+	return res
+}
