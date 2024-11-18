@@ -153,11 +153,13 @@ func (b *ReaderTransformerBuilder[T]) Build() (ReaderTransformer[T], error) {
 	if b.workerFunc != nil {
 		for i := 0; i < b.workerCount; i++ {
 			go func(i int) {
-				select {
-				case <-b.opts.BaseOptions.CTX.Done():
-					return
-				case msg := <-res.C():
-					b.workerFunc(i, msg)
+				for {
+					select {
+					case <-b.opts.BaseOptions.CTX.Done():
+						return
+					case msg := <-res.C():
+						b.workerFunc(i, msg)
+					}
 				}
 			}(i)
 		}
