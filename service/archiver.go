@@ -337,7 +337,7 @@ func (a *ArchiverService) cleaner() {
 		select {
 		case <-a.ctx.Done():
 			return
-		case <-time.NewTimer(time.Duration(a.opts.CleanTimeout) * time.Second).C:
+		case <-time.After(time.Duration(a.opts.CleanTimeout) * time.Second):
 			a.logger.Info().Uint64("last-id", a.counter.lastId).Msg("cleaner started")
 			if a.counter.lastId < a.opts.DeprecatedFrom {
 				continue
@@ -362,7 +362,7 @@ func (a *ArchiverService) authorizeB2() {
 		select {
 		case <-a.ctx.Done():
 			return
-		case <-time.NewTimer(domain.B2TokenTTL * time.Hour).C:
+		case <-time.After(domain.B2TokenTTL * time.Hour):
 			token, err := utils.AuthorizeB2(a.opts.B2.Credentials)
 			if err != nil {
 				a.logger.Error().Err(err).Msg("cant update b2 auth token")

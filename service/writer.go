@@ -353,13 +353,11 @@ func (w *WriterService) create() {
 }
 
 func (w *WriterService) cutter() {
-	t := time.NewTicker(w.opts.CutFrequency)
-	defer t.Stop()
 	for {
 		select {
 		case <-w.ctx.Done():
 			return
-		case <-t.C:
+		case <-time.After(w.opts.CutFrequency):
 			lastId, err := w.LastID()
 			if err != nil {
 				continue
@@ -380,7 +378,7 @@ func (w *WriterService) countPerformance() {
 		select {
 		case <-w.ctx.Done():
 			return
-		case <-time.NewTicker(time.Second).C:
+		case <-time.After(time.Second):
 			w.performance = w.lastId - prevLastId
 			prevLastId = w.lastId
 		}

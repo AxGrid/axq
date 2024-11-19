@@ -550,7 +550,7 @@ func (r *ReaderService) countPerformance() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case <-time.NewTicker(time.Second).C:
+		case <-time.After(time.Second):
 			r.performance = r.lastId.Current() - prevLastId
 			prevLastId = r.lastId.Current()
 		}

@@ -57,7 +57,7 @@ func (r *row) updatePerformance(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.NewTicker(time.Second).C:
+		case <-time.After(time.Second):
 			r.performance = r.service.Performance()
 			r.updateCh <- models.PerformanceUpdMsg{}
 		}
