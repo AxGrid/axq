@@ -53,7 +53,7 @@ func (f *FidLock) WaitDo(fid uint64, do func() error) error {
 			}
 		}
 		return err
-	case <-time.NewTimer(2 * time.Second).C:
+	case <-time.After(2 * time.Second):
 		f.fidMu.Lock()
 		defer f.fidMu.Unlock()
 		delete(f.fidLockChan, fid-1)
