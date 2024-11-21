@@ -311,7 +311,6 @@ func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
 	}
 
 	blob := &domain.Blob{
-		FID:         w.fid + 1,
 		Compression: w.opts.DB.Compression.Compression,
 		Encryption:  w.opts.DB.Compression.Encryption,
 		Total:       len(list.Messages),
@@ -319,8 +318,6 @@ func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
 		ToId:        list.Messages[len(list.Messages)-1].Id,
 		Message:     blobBytes,
 	}
-	w.fid = blob.FID
-	w.lastId = blob.ToId
 	return blob, nil
 }
 
@@ -344,6 +341,8 @@ func (w *WriterService) create() {
 				}
 				continue
 			}
+			w.fid = blobData.blob.FID
+			w.lastId = blobData.blob.ToId
 			w.logger.Debug().Int("size", len(blobData.blob.Message)).Uint64("fid", blobData.blob.FID).Uint64("from-id", blobData.blob.FromId).Uint64("to-id", blobData.blob.ToId).Int("total", blobData.blob.Total).Msg("create blob")
 			for _, data := range blobData.dataList {
 				data.response <- nil
