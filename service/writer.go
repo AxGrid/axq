@@ -264,16 +264,33 @@ func (w *WriterService) save() {
 			blob, err := w.prepare(blobList)
 			if err != nil {
 				w.logger.Error().Err(err).Uint64("fid", blob.FID).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Int("total", blob.Total).Msg("fail prepare blob")
-				for _, data = range blobList {
-					data.response <- err
+				for _, msg := range blobList {
+					msg.response <- err
 				}
 				continue
 			}
 
-			w.createBlobChan <- blobCreate{
+			bCreate := blobCreate{
 				blob:     blob,
 				dataList: blobList,
+				res:      make(chan error, 1),
 			}
+			w.createBlobChan <- bCreate
+			// ждать ответ тут и фид+1
+			err = <-bCreate.res
+			if err != nil {
+				w.logger.Error().Err(err).Int("size", len(bCreate.blob.Message)).Uint64("fid", bCreate.blob.FID).Uint64("from-id", bCreate.blob.FromId).Uint64("to-id", bCreate.blob.ToId).Int("total", bCreate.blob.Total).Msg("fail create blob")
+				for _, msg := range blobList {
+					msg.response <- err
+				}
+				continue
+			}
+			for _, msg := range blobList {
+				msg.response <- nil
+			}
+			w.fid = blob.FID
+			w.lastId = blob.ToId
+			w.logger.Debug().Int("size", len(bCreate.blob.Message)).Uint64("fid", bCreate.blob.FID).Uint64("from-id", bCreate.blob.FromId).Uint64("to-id", bCreate.blob.ToId).Int("total", bCreate.blob.Total).Msg("create blob")
 			w.logger.Debug().Uint64("fid", blob.FID).Msg("sent to create blob chan")
 		}
 	}
@@ -319,14 +336,13 @@ func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
 		ToId:        list.Messages[len(list.Messages)-1].Id,
 		Message:     blobBytes,
 	}
-	w.fid = blob.FID
-	w.lastId = blob.ToId
 	return blob, nil
 }
 
 type blobCreate struct {
 	blob     *domain.Blob
 	dataList []*dataHolder
+	res      chan error
 }
 
 func (w *WriterService) create() {
@@ -338,16 +354,10 @@ func (w *WriterService) create() {
 			w.logger.Debug().Uint64("fid", blobData.blob.FID).Int("total", len(blobData.dataList)).Msg("get blob")
 			err := w.db.Table(w.tableName).Create(blobData.blob).Error
 			if err != nil {
-				w.logger.Error().Err(err).Int("size", len(blobData.blob.Message)).Uint64("fid", blobData.blob.FID).Uint64("from-id", blobData.blob.FromId).Uint64("to-id", blobData.blob.ToId).Int("total", blobData.blob.Total).Msg("fail create blob")
-				for _, data := range blobData.dataList {
-					data.response <- err
-				}
+				blobData.res <- err
 				continue
 			}
-			w.logger.Debug().Int("size", len(blobData.blob.Message)).Uint64("fid", blobData.blob.FID).Uint64("from-id", blobData.blob.FromId).Uint64("to-id", blobData.blob.ToId).Int("total", blobData.blob.Total).Msg("create blob")
-			for _, data := range blobData.dataList {
-				data.response <- nil
-			}
+			blobData.res <- nil
 		}
 	}
 }
