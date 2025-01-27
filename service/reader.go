@@ -430,8 +430,14 @@ func (r *ReaderService) sorter(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case sortId := <-r.lastId.C():
+				mu.RLock()
+				sort, ok := waitMap[sortId]
+				mu.RUnlock()
+				if !ok {
+					continue
+				}
+				r.bufferChan <- sort
 				mu.Lock()
-				r.bufferChan <- waitMap[sortId]
 				delete(waitMap, sortId)
 				mu.Unlock()
 			}
@@ -509,7 +515,7 @@ func (r *ReaderService) outer(index int) {
 				result := <-holder.ack
 				if result.err != nil {
 					wlog.Error().Err(result.err).Uint64("id", holder.id).Msg("retry message")
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(25 * time.Millisecond)
 				} else {
 					break
 				}

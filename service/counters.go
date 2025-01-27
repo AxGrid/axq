@@ -81,16 +81,14 @@ func (r *CounterService) set() {
 		case <-r.ctx.Done():
 			return
 		case lastId := <-r.lastIdChan:
+			if lastId == r.lastId {
+				continue
+			}
 			for {
-				for i := 0; i < len(r.lastIdChan); i++ {
-					l := <-r.lastIdChan
-					if l > lastId {
-						lastId = l
-					}
-				}
-				if lastId > r.lastId {
+				if lastId == r.lastId+1 {
 					r.lastId = lastId
 				} else {
+					r.lastIdChan <- lastId
 					break
 				}
 			}
@@ -104,7 +102,7 @@ func (r *CounterService) save() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(3 * time.Second):
 			if r.lastId > written {
 				for {
 					if err := r.saveData(r.lastId); err != nil {
