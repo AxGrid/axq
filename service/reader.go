@@ -434,6 +434,7 @@ func (r *ReaderService) sorter(ctx context.Context) {
 				sort, ok := waitMap[sortId]
 				mu.RUnlock()
 				if !ok {
+					r.lastId.Add(sortId)
 					continue
 				}
 				r.bufferChan <- sort
