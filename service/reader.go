@@ -430,15 +430,8 @@ func (r *ReaderService) sorter(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case sortId := <-r.lastId.C():
-				mu.RLock()
-				sort, ok := waitMap[sortId]
-				mu.RUnlock()
-				if !ok {
-					r.lastId.Add(sortId)
-					continue
-				}
-				r.bufferChan <- sort
 				mu.Lock()
+				r.bufferChan <- waitMap[sortId]
 				delete(waitMap, sortId)
 				mu.Unlock()
 			}
@@ -472,8 +465,16 @@ func (r *ReaderService) b2Sorter(ctx context.Context) {
 				return
 			case sortId := <-r.lastId.C():
 				mu.RLock()
-				r.bufferChan <- waitMap[sortId]
+				sort, ok := waitMap[sortId]
 				mu.RUnlock()
+				if !ok {
+					r.lastId.Add(sortId)
+					continue
+				}
+				r.bufferChan <- sort
+				mu.Lock()
+				delete(waitMap, sortId)
+				mu.Unlock()
 			}
 		}
 	}()

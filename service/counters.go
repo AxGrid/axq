@@ -30,7 +30,7 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 		name:       name,
 		readerName: readerName,
 		db:         db,
-		lastIdChan: make(chan uint64, 1000),
+		lastIdChan: make(chan uint64, 10000),
 	}
 	if err := db.AutoMigrate(domain.BlobCounter{}); err != nil {
 		return nil, err
@@ -71,29 +71,33 @@ func (r *CounterService) Set(id uint64) {
 	r.lastIdChan <- id
 }
 
-func (r *CounterService) LastId() uint64 {
-	return r.lastId
-}
-
 func (r *CounterService) set() {
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
 		case lastId := <-r.lastIdChan:
-			if lastId == r.lastId {
-				continue
-			}
-			for {
-				if lastId == r.lastId+1 {
-					r.lastId = lastId
-				} else {
-					r.lastIdChan <- lastId
-					break
-				}
+			r.compareAndSwapLast(lastId)
+			for i := 0; i < len(r.lastIdChan); i++ {
+				lastId = <-r.lastIdChan
+				r.compareAndSwapLast(lastId)
 			}
 		}
 	}
+}
+
+func (r *CounterService) compareAndSwapLast(lastId uint64) {
+	if r.lastId == lastId {
+		return
+	}
+	if r.lastId > lastId {
+		return
+	}
+	if r.lastId+1 == lastId {
+		r.lastId = lastId
+		return
+	}
+	r.lastIdChan <- lastId
 }
 
 func (r *CounterService) save() {
@@ -102,7 +106,7 @@ func (r *CounterService) save() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case <-time.After(3 * time.Second):
+		case <-time.After(10 * time.Second):
 			if r.lastId > written {
 				for {
 					if err := r.saveData(r.lastId); err != nil {

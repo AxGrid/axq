@@ -37,10 +37,11 @@ func TestReader_Pop(t *testing.T) {
 		WithName(testTableName).
 		WithReaderName(testReaderName).
 		WithLogger(l).
+		WithWaiterCount(4).
 		Build()
 	assert.Nil(t, err)
 
-	count := 1000
+	count := 30000
 	err = prepareData(db, testTableName, count)
 	assert.Nil(t, err)
 
