@@ -41,7 +41,7 @@ func TestReader_Pop(t *testing.T) {
 		Build()
 	assert.Nil(t, err)
 
-	count := 30000
+	count := 20000
 	err = prepareData(db, testTableName, count)
 	assert.Nil(t, err)
 

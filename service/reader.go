@@ -430,8 +430,18 @@ func (r *ReaderService) sorter(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case sortId := <-r.lastId.C():
+				wlog.Debug().Uint64("sort id", sortId).Msg("receive sort id")
+				mu.RLock()
+				sort, ok := waitMap[sortId]
+				mu.RUnlock()
+				if !ok {
+					wlog.Debug().Uint64("sort id", sortId).Msg("sort id not found")
+					r.lastId.Add(sortId)
+					continue
+				}
+				wlog.Debug().Uint64("sort id", sortId).Int("counters chan len", len(r.counters.lastIdChan)).Msg("send to buffer chan")
+				r.bufferChan <- sort
 				mu.Lock()
-				r.bufferChan <- waitMap[sortId]
 				delete(waitMap, sortId)
 				mu.Unlock()
 			}
