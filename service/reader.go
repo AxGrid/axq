@@ -336,7 +336,7 @@ func (r *ReaderService) loadDB(index int) error {
 				continue
 			}
 			list.Fid = blob.FID
-			wlog.Debug().Uint64("fid", list.Fid).Msg("trying send to blob list chan")
+			wlog.Debug().Uint64("fid", list.Fid).Int("blob list chan", len(r.blobListChan)).Msg("trying send to blob list chan")
 			r.blobListChan <- &list
 			wlog.Debug().Int64("delta-time", r.deltaTime).Int64("delta-count", r.deltaTimeCount).Int64("ratio", r.deltaTime/r.deltaTimeCount).Uint64("fid", list.Fid).Int("msg count", len(list.Messages)).Msg("success sending to blob list chan")
 		}
@@ -439,7 +439,7 @@ func (r *ReaderService) sorter(ctx context.Context) {
 					r.lastId.Add(sortId)
 					continue
 				}
-				wlog.Debug().Uint64("sort id", sortId).Int("counters chan len", len(r.counters.lastIdChan)).Msg("send to buffer chan")
+				wlog.Debug().Uint64("sort id", sortId).Int("counters chan len", len(r.counters.lastIdChan)).Int("buffer chan len", len(r.bufferChan)).Msg("send to buffer chan")
 				r.bufferChan <- sort
 				mu.Lock()
 				delete(waitMap, sortId)
