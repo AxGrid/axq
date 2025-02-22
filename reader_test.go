@@ -37,27 +37,33 @@ func TestReader_Pop(t *testing.T) {
 		WithName(testTableName).
 		WithReaderName(testReaderName).
 		WithLogger(l).
-		WithWaiterCount(4).
+		WithLoaderCount(1).
+		WithWaiterCount(2).
 		Build()
 	assert.Nil(t, err)
-
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	count := 20000
+	go func() {
+		defer wg.Done()
+		uniqueMap := make(map[uint64]bool)
+		for {
+			msg := r.Pop()
+			msg.Done()
+			uniqueMap[msg.Id()] = true
+			lastId, _ := r.LastID()
+			if lastId == uint64(count-1) {
+				break
+			}
+		}
+		for k, v := range uniqueMap {
+			assert.Truef(t, v, fmt.Sprintf("not exists %d", k))
+		}
+	}()
+
 	err = prepareData(db, testTableName, count)
 	assert.Nil(t, err)
-
-	uniqueMap := make(map[uint64]bool)
-	for {
-		msg := r.Pop()
-		msg.Done()
-		uniqueMap[msg.Id()] = true
-		lastId, _ := r.LastID()
-		if lastId == uint64(count) {
-			break
-		}
-	}
-	for k, v := range uniqueMap {
-		assert.Truef(t, v, fmt.Sprintf("not exists %d", k))
-	}
+	wg.Wait()
 }
 
 func TestReader_Pop_WorkerFunc(t *testing.T) {

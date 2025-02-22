@@ -106,7 +106,7 @@ func (r *CounterService) save() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case <-time.After(10 * time.Second):
+		case <-time.After(3 * time.Second):
 			if r.lastId > written {
 				for {
 					if err := r.saveData(r.lastId); err != nil {

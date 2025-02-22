@@ -38,7 +38,6 @@ type ReaderService struct {
 	outChan        chan domain.Message
 	db             *gorm.DB
 	batchSize      uint64
-	nextBatchSize  uint64
 	b2Bucket       *backblaze.Bucket
 	b2Auth         string
 	hashId         *hashids.HashID
@@ -97,17 +96,16 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 	}
 	ctx, cancelFn := context.WithCancel(opts.CTX)
 	r := &ReaderService{
-		opts:          opts,
-		logger:        opts.Logger.With().Str("name", opts.Name).Str("reader", opts.ReaderName).Logger(),
-		blobListChan:  make(chan *protobuf.BlobMessageList, opts.LoaderCount*opts.LoaderCount),
-		bufferChan:    make(chan *protobuf.BlobMessage, opts.BufferSize),
-		outChan:       make(chan domain.Message, opts.WaiterCount),
-		db:            opts.DB.DB,
-		batchSize:     opts.BatchSize,
-		nextBatchSize: opts.BatchSize,
-		ctx:           ctx,
-		cancelFunc:    cancelFn,
-		b2Bucket:      opts.B2Bucket,
+		opts:         opts,
+		logger:       opts.Logger.With().Str("reader name", opts.ReaderName).Logger(),
+		blobListChan: make(chan *protobuf.BlobMessageList, opts.LoaderCount*opts.LoaderCount),
+		bufferChan:   make(chan *protobuf.BlobMessage, opts.BufferSize),
+		outChan:      make(chan domain.Message, opts.WaiterCount),
+		db:           opts.DB.DB,
+		batchSize:    opts.BatchSize,
+		ctx:          ctx,
+		cancelFunc:   cancelFn,
+		b2Bucket:     opts.B2Bucket,
 	}
 	var err error
 	if opts.DB.Compression.Encryption == domain.BLOB_ENCRYPTION_AES {
@@ -275,79 +273,52 @@ func (r *ReaderService) loaderB2(index int) {
 
 func (r *ReaderService) loadDB(index int) error {
 	wlog := r.logger.With().Int("db-loader-worker", index).Logger()
-	fid := atomic.AddUint64(&r.dbFid, r.batchSize)
-	var batch []domain.Blob
+	fid := atomic.AddUint64(&r.dbFid, 1)
+	var blob domain.Blob
 	for {
-		err := r.getData(fid, &batch)
+		err := r.getData(fid, &blob)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				wlog.Warn().Uint64("fid", fid).Msg("not found")
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
-				wlog.Warn().Err(err).Msg("load timeout")
 				continue
 			}
-			wlog.Error().Err(err).Msg("load error")
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
-		wlog.Info().Int("batch-len", len(batch)).Msg("read batch")
-		if len(batch) != int(r.batchSize) {
-			if len(batch) == 0 {
-				var blob domain.Blob
-				if err = r.db.Table(r.tableName).Last(&blob).Error; err != nil {
-					continue
-				}
-				wlog.Warn().Uint64("last-id", r.lastId.Current()).Uint64("last blob to-id", blob.ToId).Msg("empty batch")
-				time.Sleep(500 * time.Millisecond)
-				continue
-			}
-			r.nextBatchSize -= uint64(len(batch))
-		}
-		for _, blob := range batch {
-			wlog.Debug().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
-			data := blob.Message
-			switch blob.Encryption {
-			case domain.BLOB_ENCRYPTION_AES:
-				data, err = r.dbAes.Decrypt(blob.Message)
-				if err != nil {
-					wlog.Error().Err(err).Uint64("fid", blob.FID).Msg("decrypt blob error")
-					continue
-				}
-			}
-			switch blob.Compression {
-			case domain.BLOB_COMPRESSION_GZIP:
-				data, err = utils.GUnzipData(data)
-				if err != nil {
-					wlog.Error().Err(err).Uint64("fid", blob.FID).Msg("unzip blob error")
-					continue
-				}
-			}
-			var list protobuf.BlobMessageList
-			err = proto.Unmarshal(data, &list)
+		wlog.Debug().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
+		data := blob.Message
+		switch blob.Encryption {
+		case domain.BLOB_ENCRYPTION_AES:
+			data, err = r.dbAes.Decrypt(blob.Message)
 			if err != nil {
-				wlog.Error().Str("enсryption", blob.Encryption.String()).Str("comp", blob.Compression.String()).Err(err).Uint64("fid", blob.FID).Msg("unmarshal blob error")
 				continue
 			}
-			list.Fid = blob.FID
-			wlog.Debug().Uint64("fid", list.Fid).Int("blob list chan", len(r.blobListChan)).Msg("trying send to blob list chan")
-			r.blobListChan <- &list
-			wlog.Debug().Int64("delta-time", r.deltaTime).Int64("delta-count", r.deltaTimeCount).Int64("ratio", r.deltaTime/r.deltaTimeCount).Uint64("fid", list.Fid).Int("msg count", len(list.Messages)).Msg("success sending to blob list chan")
 		}
-		if len(batch) != int(r.batchSize) {
-			if r.nextBatchSize == 0 {
-				r.nextBatchSize = r.batchSize
-				return nil
+		switch blob.Compression {
+		case domain.BLOB_COMPRESSION_GZIP:
+			data, err = utils.GUnzipData(data)
+			if err != nil {
+				continue
 			}
+		}
+		var list protobuf.BlobMessageList
+		err = proto.Unmarshal(data, &list)
+		if err != nil {
+			wlog.Error().Str("enсryption", blob.Encryption.String()).Str("comp", blob.Compression.String()).Err(err).Uint64("fid", blob.FID).Msg("unmarshal blob error")
 			continue
 		}
+		list.Fid = blob.FID
+		r.blobListChan <- &list
+		wlog.Debug().Uint64("blob fid", blob.FID).Int("blob list chan len", len(r.blobListChan)).Msg("sent to blob list chan")
+
 		return nil
 	}
 }
 
-func (r *ReaderService) getData(fid uint64, res *[]domain.Blob) error {
+func (r *ReaderService) getData(fid uint64, res *domain.Blob) error {
 	t := time.Now()
 	localCtx, cancelFn := context.WithTimeout(r.ctx, time.Second*5)
 	defer func() {
@@ -355,7 +326,7 @@ func (r *ReaderService) getData(fid uint64, res *[]domain.Blob) error {
 		atomic.AddInt64(&r.deltaTime, time.Since(t).Milliseconds())
 		atomic.AddInt64(&r.deltaTimeCount, 1)
 	}()
-	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ?", fid-r.nextBatchSize).Order("fid").Limit(int(r.batchSize)).Find(res).Error
+	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid >= ?", fid).Order("fid").First(res).Error
 }
 
 func (r *ReaderService) loadB2(index int) error {
@@ -426,16 +397,13 @@ func (r *ReaderService) sorter(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case sortId := <-r.lastId.C():
-				wlog.Debug().Uint64("sort id", sortId).Msg("receive sort id")
 				mu.RLock()
 				sort, ok := waitMap[sortId]
 				mu.RUnlock()
 				if !ok {
-					wlog.Debug().Uint64("sort id", sortId).Msg("sort id not found")
 					r.lastId.Add(sortId)
 					continue
 				}
-				wlog.Debug().Uint64("sort id", sortId).Int("buffer chan len", len(r.bufferChan)).Msg("send to buffer chan")
 				r.bufferChan <- sort
 				mu.Lock()
 				delete(waitMap, sortId)
@@ -448,12 +416,13 @@ func (r *ReaderService) sorter(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case list := <-r.blobListChan:
-			wlog.Debug().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
+			wlog.Debug().Uint64("blob fid", list.Fid).Msg("read from blob list chan")
 			for _, msg := range list.Messages {
 				mu.Lock()
 				waitMap[msg.Id] = msg
 				mu.Unlock()
 				r.lastId.Add(msg.Id)
+				wlog.Debug().Uint64("msg id", msg.Id).Uint64("msg blob fid", list.Fid).Msg("sorted msg")
 			}
 		}
 	}
@@ -508,7 +477,7 @@ func (r *ReaderService) outer(index int) {
 		case <-r.ctx.Done():
 			return
 		case m := <-r.bufferChan:
-			wlog.Debug().Uint64("counters last id", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Msg("receive message from buffer chan")
+			wlog.Debug().Uint64("msg id", m.Id).Uint64("msg fid", m.Fid).Msg("read from buffer chan")
 			holder := &messageHolder{
 				id:      m.Id,
 				fid:     m.Fid,
