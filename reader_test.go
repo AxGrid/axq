@@ -37,13 +37,13 @@ func TestReader_Pop(t *testing.T) {
 		WithName(testTableName).
 		WithReaderName(testReaderName).
 		WithLogger(l).
-		WithLoaderCount(1).
-		WithWaiterCount(2).
+		WithLoaderCount(2).
+		WithWaiterCount(4).
 		Build()
 	assert.Nil(t, err)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	count := 20000
+	count := 35000
 	go func() {
 		defer wg.Done()
 		uniqueMap := make(map[uint64]bool)

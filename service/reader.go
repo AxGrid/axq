@@ -326,7 +326,7 @@ func (r *ReaderService) getData(fid uint64, res *domain.Blob) error {
 		atomic.AddInt64(&r.deltaTime, time.Since(t).Milliseconds())
 		atomic.AddInt64(&r.deltaTimeCount, 1)
 	}()
-	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid >= ?", fid).Order("fid").First(res).Error
+	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid = ?", fid).First(res).Error
 }
 
 func (r *ReaderService) loadB2(index int) error {
