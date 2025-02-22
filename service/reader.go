@@ -33,8 +33,6 @@ type ReaderService struct {
 	sortIdChan     chan uint64
 	dbFid          uint64
 	b2Fid          uint64
-	fidLock        *FidLock
-	b2FidLock      *FidLock
 	blobListChan   chan *protobuf.BlobMessageList
 	bufferChan     chan *protobuf.BlobMessage
 	outChan        chan domain.Message
@@ -183,8 +181,6 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 	if r.dbFid > 0 {
 		r.dbFid--
 	}
-	r.fidLock = NewFidLock(r.dbFid)
-	r.b2FidLock = NewFidLock(r.b2Fid)
 	go r.createLoaders(ctx)
 	go r.countPerformance()
 	for i := 0; i < opts.WaiterCount; i++ {
@@ -412,7 +408,7 @@ func (r *ReaderService) loadB2(index int) error {
 			continue
 		}
 		list.Fid = blob.Fid
-		wlog.Debug().Uint64("fid", list.Fid).Msg("trying send to blob list chan")
+		wlog.Debug().Uint64("fid", list.Fid).Int("blob list chan len", len(r.blobListChan)).Msg("trying send to blob list chan")
 		r.blobListChan <- &list
 		wlog.Debug().Int("msg count", len(list.Messages)).Uint64("fid", list.Fid).Msg("success sending to blob list chan")
 		return nil
@@ -439,7 +435,7 @@ func (r *ReaderService) sorter(ctx context.Context) {
 					r.lastId.Add(sortId)
 					continue
 				}
-				wlog.Debug().Uint64("sort id", sortId).Int("counters chan len", len(r.counters.lastIdChan)).Int("buffer chan len", len(r.bufferChan)).Msg("send to buffer chan")
+				wlog.Debug().Uint64("sort id", sortId).Int("buffer chan len", len(r.bufferChan)).Msg("send to buffer chan")
 				r.bufferChan <- sort
 				mu.Lock()
 				delete(waitMap, sortId)
@@ -452,7 +448,7 @@ func (r *ReaderService) sorter(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case list := <-r.blobListChan:
-			wlog.Info().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
+			wlog.Debug().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
 			for _, msg := range list.Messages {
 				mu.Lock()
 				waitMap[msg.Id] = msg
@@ -466,8 +462,8 @@ func (r *ReaderService) sorter(ctx context.Context) {
 func (r *ReaderService) b2Sorter(ctx context.Context) {
 	wlog := r.logger.With().Int("b2-sort-worker", 0).Logger()
 	wlog.Debug().Msg("start sort")
-	waitMap := map[uint64]*protobuf.BlobMessage{}
 	mu := sync.RWMutex{}
+	waitMap := map[uint64]*protobuf.BlobMessage{}
 	go func() {
 		for {
 			select {
@@ -512,10 +508,7 @@ func (r *ReaderService) outer(index int) {
 		case <-r.ctx.Done():
 			return
 		case m := <-r.bufferChan:
-			if m == nil {
-				continue
-			}
-			wlog.Debug().Uint64("id", m.Id).Msg("receive from buffer chan")
+			wlog.Debug().Uint64("counters last id", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Msg("receive message from buffer chan")
 			holder := &messageHolder{
 				id:      m.Id,
 				fid:     m.Fid,
@@ -532,8 +525,8 @@ func (r *ReaderService) outer(index int) {
 					break
 				}
 			}
-			wlog.Info().Uint64("last-id", m.Id).Msg("set last-id")
 			r.counters.Set(m.Id)
+			wlog.Info().Uint64("counters last id", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Msg("set last-id")
 		}
 	}
 }
