@@ -129,8 +129,8 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fid > 0 {
-		r.b2Fid = fid
+	if fid.FID > 0 {
+		r.b2Fid = fid.FID
 	}
 	readerName := fmt.Sprintf("reader_%s", opts.Name)
 	r.reader, err = NewReaderService(domain.ReaderOptions{
@@ -165,7 +165,7 @@ func (a *ArchiverService) loader(index int) {
 		case <-a.ctx.Done():
 			return
 		case msg := <-a.reader.C():
-			if msg.Id() <= a.counter.lastId {
+			if msg.Id() <= a.counter.lastId.Id {
 				continue
 			}
 			if msg.Id()%10000 == 0 {
@@ -269,7 +269,7 @@ func (a *ArchiverService) outer(index int) {
 				FromId: m.FromId,
 				ToId:   m.ToId,
 			}
-			a.fidCounter.Set(m.Fid)
+			//a.fidCounter.Set(m.Fid)
 		}
 	}
 }
@@ -293,13 +293,13 @@ func (a *ArchiverService) sorter() {
 			})
 
 			for _, s := range a.sortedIds {
-				if s.FromId <= a.counter.lastId {
+				if s.FromId <= a.counter.lastId.Id {
 					continue
 				}
-				if a.counter.lastId+1 == s.FromId {
-					a.counter.lastId = s.ToId
+				if a.counter.lastId.Id+1 == s.FromId {
+					a.counter.lastId.Id = s.ToId
 				} else {
-					a.counter.Set(s.ToId)
+					//a.counter.Set(s.ToId)
 					wlog.Info().Uint64("to-id", s.ToId).Msg("counter set new to-id")
 					break
 				}
@@ -338,11 +338,11 @@ func (a *ArchiverService) cleaner() {
 		case <-a.ctx.Done():
 			return
 		case <-time.After(time.Duration(a.opts.CleanTimeout) * time.Second):
-			a.logger.Info().Uint64("last-id", a.counter.lastId).Msg("cleaner started")
-			if a.counter.lastId < a.opts.DeprecatedFrom {
+			a.logger.Info().Uint64("last-id", a.counter.lastId.Id).Msg("cleaner started")
+			if a.counter.lastId.Id < a.opts.DeprecatedFrom {
 				continue
 			}
-			deleteTo := a.counter.lastId - a.opts.DeprecatedFrom
+			deleteTo := a.counter.lastId.Id - a.opts.DeprecatedFrom
 			if deleteTo > a.reader.lastId.Current()-a.opts.Intersection {
 				deleteTo = a.reader.lastId.Current() - a.opts.Intersection
 			}

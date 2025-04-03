@@ -19,8 +19,8 @@ type CounterService struct {
 	logger           zerolog.Logger
 	ctx              context.Context
 	name, readerName string
-	lastId           uint64
-	lastIdChan       chan uint64
+	lastId           domain.MessageIDs
+	lastIdChan       chan domain.MessageIDs
 }
 
 func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB) (*CounterService, error) {
@@ -30,7 +30,7 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 		name:       name,
 		readerName: readerName,
 		db:         db,
-		lastIdChan: make(chan uint64, 10000),
+		lastIdChan: make(chan domain.MessageIDs, 10000),
 	}
 	if err := db.AutoMigrate(domain.BlobCounter{}); err != nil {
 		return nil, err
@@ -39,11 +39,12 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 	if r.lastId, err = r.Get(); err != nil {
 		return nil, err
 	}
-	if r.lastId == 0 {
+	if r.lastId.Id == 0 {
 		err = r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&domain.BlobCounter{
 			ReaderName: r.readerName,
 			Name:       r.name,
-			ID:         r.lastId,
+			Fid:        r.lastId.FID,
+			ID:         r.lastId.Id,
 		}).Error
 		if err != nil {
 			return nil, err
@@ -55,19 +56,22 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 	return r, nil
 }
 
-func (r *CounterService) Get() (uint64, error) {
+func (r *CounterService) Get() (domain.MessageIDs, error) {
 	var counter domain.BlobCounter
 	err := r.db.Where("reader_name = ? AND name = ?", r.readerName, r.name).First(&counter).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, nil
+			return domain.MessageIDs{}, nil
 		}
-		return 0, err
+		return domain.MessageIDs{}, err
 	}
-	return counter.ID, nil
+	return domain.MessageIDs{
+		FID: counter.Fid,
+		Id:  counter.ID,
+	}, nil
 }
 
-func (r *CounterService) Set(id uint64) {
+func (r *CounterService) Set(id domain.MessageIDs) {
 	r.lastIdChan <- id
 }
 
@@ -86,14 +90,14 @@ func (r *CounterService) set() {
 	}
 }
 
-func (r *CounterService) compareAndSwapLast(lastId uint64) {
-	if r.lastId == lastId {
+func (r *CounterService) compareAndSwapLast(lastId domain.MessageIDs) {
+	if r.lastId.Id == lastId.Id {
 		return
 	}
-	if r.lastId > lastId {
+	if r.lastId.Id > lastId.Id {
 		return
 	}
-	if r.lastId+1 == lastId {
+	if r.lastId.Id+1 == lastId.Id {
 		r.lastId = lastId
 		return
 	}
@@ -107,13 +111,13 @@ func (r *CounterService) save() {
 		case <-r.ctx.Done():
 			return
 		case <-time.After(3 * time.Second):
-			if r.lastId > written {
+			if r.lastId.Id > written {
 				for {
 					if err := r.saveData(r.lastId); err != nil {
 						r.logger.Error().Err(err).Msg("fail save counter")
 						time.Sleep(time.Millisecond * 100)
 					} else {
-						written = r.lastId
+						written = r.lastId.Id
 						break
 					}
 				}
@@ -122,6 +126,9 @@ func (r *CounterService) save() {
 	}
 }
 
-func (r *CounterService) saveData(id uint64) error {
-	return r.db.Model(&domain.BlobCounter{}).Where("reader_name = ? AND name = ?", r.readerName, r.name).Update("id", id).Error
+func (r *CounterService) saveData(ids domain.MessageIDs) error {
+	return r.db.Model(&domain.BlobCounter{}).Where("reader_name = ? AND name = ?", r.readerName, r.name).Updates(map[string]interface{}{
+		"id":  ids.Id,
+		"fid": ids.FID,
+	}).Error
 }

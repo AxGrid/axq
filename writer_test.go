@@ -25,7 +25,7 @@ func TestWriter_Push(t *testing.T) {
 	assert.Nil(t, err)
 
 	msg := []byte("hello world")
-	count := 10000
+	count := 2_000_000
 	wg := sync.WaitGroup{}
 	for i := 0; i < count; i++ {
 		wg.Add(1)

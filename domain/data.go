@@ -17,6 +17,7 @@ type Blob struct {
 type BlobCounter struct {
 	ReaderName string `gorm:"size:128;primaryKey"`
 	Name       string `gorm:"size:128;primaryKey"`
+	Fid        uint64
 	ID         uint64
 }
 

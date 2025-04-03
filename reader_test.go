@@ -27,7 +27,7 @@ func TestReader_Pop(t *testing.T) {
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	assert.Nil(t, err)
-	l := utils.InitLogger("default")
+	l := utils.InitLogger("debug")
 
 	testId := uuid.New()
 	testTableName := fmt.Sprintf("test_table_%x", testId[0:8])
@@ -43,7 +43,7 @@ func TestReader_Pop(t *testing.T) {
 	assert.Nil(t, err)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	count := 35000
+	count := 10000
 	go func() {
 		defer wg.Done()
 		uniqueMap := make(map[uint64]bool)

@@ -235,7 +235,7 @@ func (r *B2ReaderService) outer(index int) {
 					break
 				}
 			}
-			r.counters.Set(m.Id)
+			//r.counters.Set(m.Id)
 		}
 	}
 }

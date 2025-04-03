@@ -63,7 +63,11 @@ func (r *ReaderService) GetWriterName() string {
 }
 
 func (r *ReaderService) Counter() (uint64, error) {
-	return r.counters.Get()
+	counters, err := r.counters.Get()
+	if err != nil {
+		return 0, err
+	}
+	return counters.Id, nil
 }
 
 func (r *ReaderService) Performance() uint64 {
@@ -150,29 +154,19 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 		return nil, err
 	}
 	if opts.LastId == nil {
-		var lastId uint64
-		lastId, err = r.counters.Get()
+		lastId, err := r.counters.Get()
 		if err != nil {
+			fmt.Println(err, "1")
 			return nil, err
 		}
-		r.lastId = utils.NewMinimalId(lastId)
+		r.lastId = utils.NewMinimalId(lastId.Id)
 		if r.lastId.Current() > 0 {
-			var blob domain.Blob
-			err = r.db.Table(r.tableName).Where("? >= from_id AND ? <= to_id", r.lastId.Current(), r.lastId.Current()).First(&blob).Error
-			if err != nil {
-				return nil, err
-			}
-			r.dbFid = blob.FID
+			r.dbFid = lastId.FID
 		}
 	} else {
 		r.lastId = utils.NewMinimalId(opts.LastId.LastId)
 		if r.lastId.Current() > 0 {
-			var blob domain.Blob
-			err = r.db.Table(r.tableName).Where("? >= from_id AND ? <= to_id", r.lastId.Current(), r.lastId.Current()).First(&blob).Error
-			if err != nil {
-				return nil, err
-			}
-			r.dbFid = blob.FID
+			r.dbFid = opts.LastId.FID
 		}
 	}
 	r.logger.Debug().Uint64("last-id", r.lastId.Current()).Uint64("fid", r.dbFid).Msg("init reader")
@@ -419,6 +413,7 @@ func (r *ReaderService) sorter(ctx context.Context) {
 			wlog.Debug().Uint64("blob fid", list.Fid).Msg("read from blob list chan")
 			for _, msg := range list.Messages {
 				mu.Lock()
+				msg.Fid = list.Fid
 				waitMap[msg.Id] = msg
 				mu.Unlock()
 				r.lastId.Add(msg.Id)
@@ -494,8 +489,11 @@ func (r *ReaderService) outer(index int) {
 					break
 				}
 			}
-			r.counters.Set(m.Id)
-			wlog.Info().Uint64("counters last id", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Msg("set last-id")
+			r.counters.Set(domain.MessageIDs{
+				FID: m.Fid,
+				Id:  m.Id,
+			})
+			wlog.Info().Any("counters", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Uint64("message fid", m.Fid).Msg("set last-id")
 		}
 	}
 }
