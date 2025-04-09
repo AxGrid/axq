@@ -43,7 +43,7 @@ func TestReader_Pop(t *testing.T) {
 	assert.Nil(t, err)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	count := 10000
+	var count uint64 = 24781
 	go func() {
 		defer wg.Done()
 		uniqueMap := make(map[uint64]bool)
@@ -52,7 +52,7 @@ func TestReader_Pop(t *testing.T) {
 			msg.Done()
 			uniqueMap[msg.Id()] = true
 			lastId, _ := r.LastID()
-			if lastId == uint64(count-1) {
+			if lastId == count {
 				break
 			}
 		}
@@ -61,7 +61,7 @@ func TestReader_Pop(t *testing.T) {
 		}
 	}()
 
-	err = prepareData(db, testTableName, count)
+	err = prepareData(db, testTableName, int(count))
 	assert.Nil(t, err)
 	wg.Wait()
 }
