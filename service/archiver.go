@@ -116,12 +116,12 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		r.b2Aes = aes
 	}
 	archiverName := fmt.Sprintf("b2arch_%s", opts.Name)
-	r.counter, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db)
+	r.counter, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db, false)
 	if err != nil {
 		return nil, err
 	}
 
-	r.fidCounter, err = NewCounterService(fmt.Sprintf("%s_fid", opts.Name), archiverName, opts.CTX, opts.Logger, r.db)
+	r.fidCounter, err = NewCounterService(fmt.Sprintf("%s_fid", opts.Name), archiverName, opts.CTX, opts.Logger, r.db, false)
 	if err != nil {
 		return nil, err
 	}

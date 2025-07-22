@@ -67,7 +67,7 @@ func NewB2ReaderService(opts domain.B2ReaderOptions) (*B2ReaderService, error) {
 		return nil, err
 	}
 
-	b2r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, b2r.db)
+	b2r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, b2r.db, false)
 	if err != nil {
 		return nil, err
 	}

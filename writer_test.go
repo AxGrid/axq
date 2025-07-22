@@ -14,7 +14,7 @@ import (
 )
 
 func TestWriter_Push(t *testing.T) {
-	connectionString := "root:@tcp(localhost:3306)/axq?charset=utf8&parseTime=True&loc=Local"
+	connectionString := "root:@tcp(localhost:3306)/axq_queue?charset=utf8&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(connectionString), &gorm.Config{})
 
 	testId := uuid.New()

@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/axgrid/axq/domain"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -23,7 +24,7 @@ type CounterService struct {
 	lastIdChan       chan domain.MessageIDs
 }
 
-func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB) (*CounterService, error) {
+func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd bool) (*CounterService, error) {
 	r := &CounterService{
 		ctx:        ctx,
 		logger:     logger,
@@ -40,12 +41,27 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 		return nil, err
 	}
 	if r.lastId.Id == 0 {
-		err = r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&domain.BlobCounter{
-			ReaderName: r.readerName,
-			Name:       r.name,
-			Fid:        r.lastId.FID,
-			ID:         r.lastId.Id,
-		}).Error
+		if startFromEnd {
+			var blob domain.Blob
+			if err := r.db.Table(fmt.Sprintf("axq_%s", name)).Order("fid desc").First(&blob).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					if err = r.createCounter(0, 0); err != nil {
+						return nil, err
+					}
+					return r, nil
+				}
+				return nil, err
+			}
+			if err = r.createCounter(blob.FID, blob.ToId); err != nil {
+				return nil, err
+			}
+			r.lastId = domain.MessageIDs{
+				FID: blob.FID,
+				Id:  blob.ToId,
+			}
+			return r, nil
+		}
+		err = r.createCounter(0, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -54,6 +70,15 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 	go r.set()
 	go r.save()
 	return r, nil
+}
+
+func (r *CounterService) createCounter(fid, id uint64) error {
+	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&domain.BlobCounter{
+		ReaderName: r.readerName,
+		Name:       r.name,
+		Fid:        fid,
+		ID:         id,
+	}).Error
 }
 
 func (r *CounterService) Get() (domain.MessageIDs, error) {

@@ -79,15 +79,16 @@ func (w *WriterOptions) GetReaderName() string {
 
 type ReaderOptions struct {
 	BaseOptions
-	DB          DataBaseOptions
-	B2          B2Options
-	B2Bucket    *backblaze.Bucket
-	ReaderName  string
-	BufferSize  int
-	BatchSize   uint64
-	LoaderCount int
-	WaiterCount int
-	LastId      *LastIdOptions
+	DB           DataBaseOptions
+	B2           B2Options
+	B2Bucket     *backblaze.Bucket
+	ReaderName   string
+	BufferSize   int
+	BatchSize    uint64
+	LoaderCount  int
+	WaiterCount  int
+	LastId       *LastIdOptions
+	StartFromEnd bool
 }
 
 func (r *ReaderOptions) GetType() string {

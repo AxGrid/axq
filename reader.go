@@ -138,6 +138,11 @@ func (b *ReaderBuilder) WithWorkerFunc(count int, f domain.WorkerFunc) *ReaderBu
 	return b
 }
 
+func (b *ReaderBuilder) WithStartFromEnd() *ReaderBuilder {
+	b.opts.StartFromEnd = true
+	return b
+}
+
 func (b *ReaderBuilder) Build() (Reader, error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)

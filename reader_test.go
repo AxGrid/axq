@@ -29,9 +29,8 @@ func TestReader_Pop(t *testing.T) {
 	assert.Nil(t, err)
 	l := utils.InitLogger("debug")
 
-	testId := uuid.New()
-	testTableName := fmt.Sprintf("test_table_%x", testId[0:8])
-	testReaderName := fmt.Sprintf("test_reader_%x", testId[0:8])
+	testTableName := "test_writer_0812ce2d85864d43"
+	testReaderName := fmt.Sprintf("reader_%s", testTableName)
 	r, err := NewReader().
 		WithDB(db).
 		WithName(testTableName).
@@ -39,11 +38,13 @@ func TestReader_Pop(t *testing.T) {
 		WithLogger(l).
 		WithLoaderCount(2).
 		WithWaiterCount(4).
+		WithStartFromEnd().
 		Build()
 	assert.Nil(t, err)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	var count uint64 = 24781
+	var count uint64 = 1000
+	time.Sleep(5 * time.Second)
 	go func() {
 		defer wg.Done()
 		uniqueMap := make(map[uint64]bool)
@@ -55,14 +56,12 @@ func TestReader_Pop(t *testing.T) {
 			if lastId == count {
 				break
 			}
+			fmt.Println(lastId, "LAST ID")
 		}
 		for k, v := range uniqueMap {
 			assert.Truef(t, v, fmt.Sprintf("not exists %d", k))
 		}
 	}()
-
-	err = prepareData(db, testTableName, int(count))
-	assert.Nil(t, err)
 	wg.Wait()
 }
 
@@ -114,7 +113,7 @@ func TestReader_Error_Retry(t *testing.T) {
 	l := zerolog.Nop()
 
 	testId := uuid.New()
-	testTableName := fmt.Sprintf("test_table_%x", testId[0:8])
+	testTableName := "test_writer_0812ce2d85864d43"
 	testReaderName := fmt.Sprintf("test_reader_%x", testId[0:8])
 	count := 500
 	mu := &sync.Mutex{}

@@ -149,14 +149,13 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 		}
 	}
 
-	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db)
+	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd)
 	if err != nil {
 		return nil, err
 	}
 	if opts.LastId == nil {
 		lastId, err := r.counters.Get()
 		if err != nil {
-			fmt.Println(err, "1")
 			return nil, err
 		}
 		r.lastId = utils.NewMinimalId(lastId.Id)
