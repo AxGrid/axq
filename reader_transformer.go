@@ -135,6 +135,11 @@ func (b *ReaderTransformerBuilder[T]) WithMiddlewares(middlewares ...domain.Read
 	return b
 }
 
+func (b *ReaderTransformerBuilder[T]) WithStartFromEnd() *ReaderTransformerBuilder[T] {
+	b.opts.StartFromEnd = true
+	return b
+}
+
 func (b *ReaderTransformerBuilder[T]) Build() (ReaderTransformer[T], error) {
 	if b.opts.DB.DB == nil {
 		gLogger := utils.NewGLogger(b.opts.Logger, true).LogMode(logger.Warn)
