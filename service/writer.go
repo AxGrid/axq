@@ -112,6 +112,10 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	return w, nil
 }
 
+func (w *WriterService) Size() int {
+	return len(w.inChan)
+}
+
 func (w *WriterService) Close() {
 	w.stopped = true
 	for {

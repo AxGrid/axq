@@ -29,21 +29,25 @@ func TestReader_Pop(t *testing.T) {
 	assert.Nil(t, err)
 	l := utils.InitLogger("debug")
 
-	testTableName := "test_writer_0812ce2d85864d43"
+	testTableName := fmt.Sprintf("test_writer_%s", uuid.New().String())
 	testReaderName := fmt.Sprintf("reader_%s", testTableName)
 	r, err := NewReader().
 		WithDB(db).
 		WithName(testTableName).
 		WithReaderName(testReaderName).
 		WithLogger(l).
-		WithLoaderCount(2).
-		WithWaiterCount(4).
-		WithStartFromEnd().
+		WithLoaderCount(10).
+		WithWaiterCount(20).
+		WithLogger(zerolog.Nop()).
 		Build()
 	assert.Nil(t, err)
+	var count uint64 = 20000
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	var count uint64 = 1000
+	if err := prepareData(db, testTableName, int(count)); err != nil {
+		fmt.Println(err)
+		return
+	}
 	time.Sleep(5 * time.Second)
 	go func() {
 		defer wg.Done()

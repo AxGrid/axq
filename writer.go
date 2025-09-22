@@ -33,6 +33,7 @@ type Writer interface {
 	MinimalFID() (uint64, error)
 	MinimalID() (uint64, error)
 	Performance() uint64
+	Size() int
 }
 
 type WriterBuilder struct {

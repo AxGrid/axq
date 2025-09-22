@@ -267,9 +267,8 @@ func (r *ReaderService) loaderB2(index int) {
 func (r *ReaderService) loadDB(index int) error {
 	wlog := r.logger.With().Int("db-loader-worker", index).Logger()
 	fid := atomic.AddUint64(&r.dbFid, 1)
-	var blob domain.Blob
 	for {
-		err := r.getData(fid, &blob)
+		batch, err := r.getData(fid, 10)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				time.Sleep(100 * time.Millisecond)
@@ -281,45 +280,50 @@ func (r *ReaderService) loadDB(index int) error {
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
-		wlog.Debug().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
-		data := blob.Message
-		switch blob.Encryption {
-		case domain.BLOB_ENCRYPTION_AES:
-			data, err = r.dbAes.Decrypt(blob.Message)
-			if err != nil {
-				continue
-			}
-		}
-		switch blob.Compression {
-		case domain.BLOB_COMPRESSION_GZIP:
-			data, err = utils.GUnzipData(data)
-			if err != nil {
-				continue
-			}
-		}
-		var list protobuf.BlobMessageList
-		err = proto.Unmarshal(data, &list)
-		if err != nil {
-			wlog.Error().Str("enсryption", blob.Encryption.String()).Str("comp", blob.Compression.String()).Err(err).Uint64("fid", blob.FID).Msg("unmarshal blob error")
+		if len(batch) == 0 {
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		list.Fid = blob.FID
-		r.blobListChan <- &list
-		wlog.Debug().Uint64("blob fid", blob.FID).Int("blob list chan len", len(r.blobListChan)).Msg("sent to blob list chan")
-
+		for _, blob := range batch {
+			wlog.Info().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
+			data := blob.Message
+			switch blob.Encryption {
+			case domain.BLOB_ENCRYPTION_AES:
+				data, err = r.dbAes.Decrypt(blob.Message)
+				if err != nil {
+					continue
+				}
+			}
+			switch blob.Compression {
+			case domain.BLOB_COMPRESSION_GZIP:
+				data, err = utils.GUnzipData(data)
+				if err != nil {
+					continue
+				}
+			}
+			var list protobuf.BlobMessageList
+			err = proto.Unmarshal(data, &list)
+			if err != nil {
+				wlog.Error().Str("enсryption", blob.Encryption.String()).Str("comp", blob.Compression.String()).Err(err).Uint64("fid", blob.FID).Msg("unmarshal blob error")
+				continue
+			}
+			list.Fid = blob.FID
+			r.blobListChan <- &list
+			wlog.Debug().Uint64("blob fid", blob.FID).Int("blob list chan len", len(r.blobListChan)).Msg("sent to blob list chan")
+		}
+		atomic.StoreUint64(&r.dbFid, batch[len(batch)-1].FID+1)
 		return nil
 	}
 }
 
-func (r *ReaderService) getData(fid uint64, res *domain.Blob) error {
-	t := time.Now()
+func (r *ReaderService) getData(fid uint64, batchSize uint64) ([]*domain.Blob, error) {
+	var res []*domain.Blob
 	localCtx, cancelFn := context.WithTimeout(r.ctx, time.Second*5)
-	defer func() {
-		cancelFn()
-		atomic.AddInt64(&r.deltaTime, time.Since(t).Milliseconds())
-		atomic.AddInt64(&r.deltaTimeCount, 1)
-	}()
-	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid = ?", fid).First(res).Error
+	defer cancelFn()
+	if err := r.db.WithContext(localCtx).Table(r.tableName).Where("fid >= ? AND fid < ?", fid, fid+batchSize).Find(&res).Error; err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (r *ReaderService) loadB2(index int) error {
