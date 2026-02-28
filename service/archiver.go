@@ -151,7 +151,6 @@ func (a *ArchiverService) loader(index int) {
 		case <-a.ctx.Done():
 			return
 		case msg := <-a.reader.C():
-			fmt.Println(msg.Id(), "READ", a.counters.lastId)
 			if msg.Id() <= a.counters.lastId.Id {
 				continue
 			}
@@ -266,27 +265,23 @@ type messageIds struct {
 // {FID: 200, FromId: 1000, ToId: 1010}
 // {FID: 201, FromId: 1011, ToId: 1020}
 func (a *ArchiverService) sorter() {
-	wlog := a.logger.With().Int("archiver-sort-worker", 0).Logger()
-	wlog.Debug().Msg("start sorter")
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
 		case ids := <-a.blobIdsChan:
 			if a.counters.lastId.Id+1 != ids.FromId {
-				fmt.Println("SKIP", ids)
 				a.blobIdsChan <- ids
 				continue
 			}
-			fmt.Println("GLOBAL SET", ids)
 			for i := ids.FromId; i <= ids.ToId; i++ {
 				msgIds := domain.MessageIDs{
 					FID: ids.FID,
 					Id:  i,
 				}
 				a.counters.Set(msgIds)
-				fmt.Println("ITER SET", ids)
 			}
+			a.logger.Info().Any("ids", ids).Msg("processed batch. set counters")
 		}
 	}
 }

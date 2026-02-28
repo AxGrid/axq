@@ -24,6 +24,8 @@ func TestArchiver(t *testing.T) {
 		WithDB(db).
 		WithName(testTableName).
 		WithLogger(l).
+		WithChunkSize(100_000).
+		WithMaxCount(100_000).
 		Build()
 	assert.Nil(t, err)
 	timer := time.NewTimer(time.Second * 30)

@@ -7,6 +7,7 @@ package axq
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/service"
@@ -50,6 +51,10 @@ func NewArchiver() *ArchiverBuilder {
 				},
 			},
 			B2: domain.B2Options{
+				Credentials: backblaze.Credentials{
+					ApplicationKey: os.Getenv("AX_TEST_B2_APP_KEY"),
+					KeyID:          os.Getenv("AX_TEST_B2_KEY_ID"),
+				},
 				Salt:     "ohShomu8abue9EiT",
 				Endpoint: "",
 				Compression: domain.CompressionOptions{
