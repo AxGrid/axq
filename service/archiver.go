@@ -145,7 +145,7 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 
 func (a *ArchiverService) loader(index int) {
 	wlog := a.logger.With().Int("archiver loader", index).Logger()
-	wlog.Debug().Msg("start archiver loader ")
+	wlog.Debug().Msg("start archiver loader")
 	for {
 		select {
 		case <-a.ctx.Done():
