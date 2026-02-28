@@ -7,7 +7,6 @@ package axq
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/service"
@@ -40,7 +39,6 @@ func NewArchiver() *ArchiverBuilder {
 		dbHost:     "localhost",
 		dbPort:     3306,
 		opts: domain.ArchiverOptions{
-			Prefix: "test",
 			BaseOptions: domain.BaseOptions{
 				Name:   "unnamed",
 				CTX:    context.Background(),
@@ -52,10 +50,6 @@ func NewArchiver() *ArchiverBuilder {
 				},
 			},
 			B2: domain.B2Options{
-				Credentials: backblaze.Credentials{
-					ApplicationKey: os.Getenv("AX_TEST_B2_APP_KEY"),
-					KeyID:          os.Getenv("AX_TEST_B2_KEY_ID"),
-				},
 				Salt:     "ohShomu8abue9EiT",
 				Endpoint: "",
 				Compression: domain.CompressionOptions{
@@ -160,6 +154,16 @@ func (b *ArchiverBuilder) WithB2Credentials(credentials backblaze.Credentials) *
 
 func (b *ArchiverBuilder) WithB2Salt(salt string) *ArchiverBuilder {
 	b.opts.B2.Salt = salt
+	return b
+}
+
+func (b *ArchiverBuilder) WithB2Endpoint(endpoint string) *ArchiverBuilder {
+	b.opts.B2.Endpoint = endpoint
+	return b
+}
+
+func (b *ArchiverBuilder) WithPrefix(prefix string) *ArchiverBuilder {
+	b.opts.Prefix = prefix
 	return b
 }
 
