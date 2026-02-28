@@ -3,11 +3,11 @@ package axq
 import (
 	"context"
 	"fmt"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/service"
 	"github.com/axgrid/axq/utils"
 	"github.com/rs/zerolog"
-	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -85,16 +85,6 @@ func (b *ReaderTransformerBuilder[T]) WithBufferSize(bufferSize int) *ReaderTran
 
 func (b *ReaderTransformerBuilder[T]) WithWaiterCount(waiterCount int) *ReaderTransformerBuilder[T] {
 	b.opts.WaiterCount = waiterCount
-	return b
-}
-
-func (b *ReaderTransformerBuilder[T]) WithB2Credentials(credentials backblaze.Credentials) *ReaderTransformerBuilder[T] {
-	b.opts.B2.Credentials = credentials
-	return b
-}
-
-func (b *ReaderTransformerBuilder[T]) WithB2Salt(salt string) *ReaderTransformerBuilder[T] {
-	b.opts.B2.Salt = salt
 	return b
 }
 

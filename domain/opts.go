@@ -6,11 +6,12 @@ package domain
 
 import (
 	"context"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
-	"time"
 )
 
 const (
@@ -80,8 +81,6 @@ func (w *WriterOptions) GetReaderName() string {
 type ReaderOptions struct {
 	BaseOptions
 	DB           DataBaseOptions
-	B2           B2Options
-	B2Bucket     *backblaze.Bucket
 	ReaderName   string
 	BufferSize   int
 	BatchSize    uint64
@@ -124,6 +123,7 @@ type ArchiverOptions struct {
 	DB             DataBaseOptions
 	B2             B2Options
 	Reader         ReaderOptions
+	Prefix         string
 	ChunkSize      int
 	MaxSize        int
 	MaxCount       int

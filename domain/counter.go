@@ -1,5 +1,11 @@
 package domain
 
+type BlobIDs struct {
+	FID    uint64
+	FromId uint64
+	ToId   uint64
+}
+
 type MessageIDs struct {
 	FID uint64
 	Id  uint64

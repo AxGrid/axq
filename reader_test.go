@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
@@ -15,10 +20,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"math/rand"
-	"sync"
-	"testing"
-	"time"
 )
 
 func TestReader_Pop(t *testing.T) {
@@ -38,7 +39,6 @@ func TestReader_Pop(t *testing.T) {
 		WithLogger(l).
 		WithLoaderCount(2).
 		WithWaiterCount(4).
-		WithStartFromEnd().
 		Build()
 	assert.Nil(t, err)
 	wg := sync.WaitGroup{}

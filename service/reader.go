@@ -7,6 +7,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
@@ -17,9 +21,6 @@ import (
 	"golang.org/x/exp/constraints"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type T constraints.Integer
@@ -27,8 +28,8 @@ type T constraints.Integer
 type ReaderService struct {
 	opts           domain.ReaderOptions
 	logger         zerolog.Logger
-	counters       *CounterService
 	tableName      string
+	counters       *CounterService
 	lastId         *utils.MinimalId[uint64]
 	sortIdChan     chan uint64
 	dbFid          uint64
@@ -100,8 +101,9 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 	}
 	ctx, cancelFn := context.WithCancel(opts.CTX)
 	r := &ReaderService{
-		opts:         opts,
-		logger:       opts.Logger.With().Str("reader name", opts.ReaderName).Logger(),
+		opts: opts,
+		//logger:       opts.Logger.With().Str("reader name", opts.ReaderName).Logger(),
+		logger:       zerolog.Nop(),
 		blobListChan: make(chan *protobuf.BlobMessageList, opts.LoaderCount*opts.LoaderCount),
 		bufferChan:   make(chan *protobuf.BlobMessage, opts.BufferSize),
 		outChan:      make(chan domain.Message, opts.WaiterCount),
@@ -109,7 +111,6 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 		batchSize:    opts.BatchSize,
 		ctx:          ctx,
 		cancelFunc:   cancelFn,
-		b2Bucket:     opts.B2Bucket,
 	}
 	var err error
 	if opts.DB.Compression.Encryption == domain.BLOB_ENCRYPTION_AES {
@@ -131,24 +132,6 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", r.tableName, err))
 		}
 	}
-
-	if opts.B2Bucket == nil && r.opts.B2.Credentials.ApplicationKey != "" {
-		r.b2Bucket, err = r.createBucket("axqueue-" + utils.GetMD5Hash([]byte(opts.Name), opts.B2.Salt))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if opts.B2.Salt != "" {
-		hashIdData := hashids.NewData()
-		hashIdData.Salt = opts.B2.Salt
-		hashIdData.MinLength = 10
-		r.hashId, err = hashids.NewWithData(hashIdData)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd)
 	if err != nil {
 		return nil, err
@@ -187,31 +170,10 @@ func (r *ReaderService) createLoaders(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			if r.opts.B2.Credentials.ApplicationKey != "" {
-				r.startB2Loaders()
-			}
 			r.startDBLoaders()
 		}
 	}
 
-}
-
-func (r *ReaderService) startB2Loaders() {
-	b2Ctx, b2Cancel := context.WithCancel(context.Background())
-	r.logger.Info().Msg("application key found. starting b2 loaders")
-	wg := sync.WaitGroup{}
-	for i := 0; i < r.opts.LoaderCount; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			r.loaderB2(i)
-		}(i)
-	}
-	go r.b2Sorter(b2Ctx)
-	r.logger.Info().Msg("waiting b2 loaders work done")
-	wg.Wait()
-	b2Cancel()
-	r.logger.Info().Msg("b2 loaders work done")
 }
 
 func (r *ReaderService) startDBLoaders() {
@@ -248,22 +210,6 @@ func (r *ReaderService) loaderDB(index int) {
 	}
 }
 
-func (r *ReaderService) loaderB2(index int) {
-	wlog := r.logger.With().Int("b2-loader-worker", index).Logger()
-	wlog.Debug().Msg("start b2 loader")
-	for {
-		select {
-		case <-r.ctx.Done():
-			return
-		default:
-			if err := r.loadB2(index); err != nil {
-				wlog.Error().Err(err).Msg("error while loading b2. stopping")
-				return
-			}
-		}
-	}
-}
-
 func (r *ReaderService) loadDB(index int) error {
 	wlog := r.logger.With().Int("db-loader-worker", index).Logger()
 	fid := atomic.AddUint64(&r.dbFid, 1)
@@ -285,7 +231,7 @@ func (r *ReaderService) loadDB(index int) error {
 		data := blob.Message
 		switch blob.Encryption {
 		case domain.BLOB_ENCRYPTION_AES:
-			data, err = r.dbAes.Decrypt(blob.Message)
+			data, err = r.dbAes.Decrypt(data)
 			if err != nil {
 				continue
 			}
@@ -320,63 +266,6 @@ func (r *ReaderService) getData(fid uint64, res *domain.Blob) error {
 		atomic.AddInt64(&r.deltaTimeCount, 1)
 	}()
 	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid = ?", fid).First(res).Error
-}
-
-func (r *ReaderService) loadB2(index int) error {
-	wlog := r.logger.With().Int("b2-loader-worker", index).Logger()
-	fid := atomic.AddUint64(&r.b2Fid, 1)
-	for {
-		filename, err := utils.GetBlobFileName(r.hashId, r.opts.Name, fid)
-		if err != nil {
-			wlog.Error().Err(err).Uint64("fid", fid).Msg("fail to get filename")
-			continue
-		}
-		wlog.Info().Uint64("fid", fid).Str("filename", filename).Msg("try to download file")
-		content, err := utils.DownloadFileByName(r.b2Bucket.Name, r.opts.B2.Endpoint, filename)
-		if err != nil {
-			if errors.Is(domain.ErrB2FileNotFound, err) {
-				wlog.Warn().Uint64("fid", fid).Msg("fid not found")
-				return err
-			} else {
-				wlog.Error().Err(err).Uint64("fid", fid).Msg("download file error")
-			}
-			continue
-		}
-		var blob protobuf.Blob
-		err = proto.Unmarshal(content, &blob)
-		if err != nil {
-			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob error")
-			continue
-		}
-		wlog.Info().Uint64("fid", fid).Str("filename", filename).Msg("successfully downloaded file")
-		switch blob.Encryption {
-		case domain.BLOB_ENCRYPTION_AES:
-			content, err = r.dbAes.Decrypt(content)
-			if err != nil {
-				wlog.Error().Err(err).Uint64("fid", fid).Msg("decrypt blob error")
-				continue
-			}
-		}
-		switch blob.Compression {
-		case domain.BLOB_COMPRESSION_GZIP:
-			content, err = utils.GUnzipData(content)
-			if err != nil {
-				wlog.Error().Err(err).Uint64("fid", fid).Msg("unzip blob error")
-				continue
-			}
-		}
-		var list protobuf.BlobMessageList
-		err = proto.Unmarshal(blob.Messages, &list)
-		if err != nil {
-			wlog.Error().Str("enc", r.opts.B2.Compression.Encryption.String()).Err(err).Uint64("fid", fid).Msg("unmarshal blob messages list error")
-			continue
-		}
-		list.Fid = blob.Fid
-		wlog.Debug().Uint64("fid", list.Fid).Int("blob list chan len", len(r.blobListChan)).Msg("trying send to blob list chan")
-		r.blobListChan <- &list
-		wlog.Debug().Int("msg count", len(list.Messages)).Uint64("fid", list.Fid).Msg("success sending to blob list chan")
-		return nil
-	}
 }
 
 func (r *ReaderService) sorter(ctx context.Context) {
@@ -422,47 +311,6 @@ func (r *ReaderService) sorter(ctx context.Context) {
 	}
 }
 
-func (r *ReaderService) b2Sorter(ctx context.Context) {
-	wlog := r.logger.With().Int("b2-sort-worker", 0).Logger()
-	wlog.Debug().Msg("start sort")
-	mu := sync.RWMutex{}
-	waitMap := map[uint64]*protobuf.BlobMessage{}
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case sortId := <-r.lastId.C():
-				mu.RLock()
-				sort, ok := waitMap[sortId]
-				mu.RUnlock()
-				if !ok {
-					r.lastId.Add(sortId)
-					continue
-				}
-				r.bufferChan <- sort
-				mu.Lock()
-				delete(waitMap, sortId)
-				mu.Unlock()
-			}
-		}
-	}()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case list := <-r.blobListChan:
-			wlog.Info().Int("wait map", len(waitMap)).Uint64("current-fid", list.Fid).Uint64("last-id", r.lastId.Current()).Msg("receive sort data")
-			for _, msg := range list.Messages {
-				mu.Lock()
-				waitMap[msg.Id] = msg
-				mu.Unlock()
-				r.lastId.Add(msg.Id)
-			}
-		}
-	}
-}
-
 func (r *ReaderService) outer(index int) {
 	wlog := r.logger.With().Int("reader-out-worker", index).Logger()
 	wlog.Debug().Msg("start reader outer")
@@ -495,30 +343,6 @@ func (r *ReaderService) outer(index int) {
 			wlog.Info().Any("counters", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Uint64("message fid", m.Fid).Msg("set last-id")
 		}
 	}
-}
-
-func (r *ReaderService) createBucket(bucketName string) (*backblaze.Bucket, error) {
-	b2, err := backblaze.NewB2(r.opts.B2.Credentials)
-	if err != nil {
-		return nil, errors.New("fail to create B2: " + err.Error())
-	}
-	r.logger.Info().Interface("creds", r.opts.B2.Credentials).Msg("authorize B2")
-	if err = b2.AuthorizeAccount(); err != nil {
-		return nil, errors.New("fail to authorize B2: " + err.Error())
-	}
-
-	bucket, err := b2.Bucket(bucketName)
-	if err != nil || bucket == nil {
-		bucket, err = b2.CreateBucket(bucketName, backblaze.AllPublic)
-		r.logger.Info().Msg("create bucket")
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		r.logger.Info().Bool("has-bucket", bucket != nil).Msg("connected to bucket")
-	}
-
-	return bucket, nil
 }
 
 func (r *ReaderService) countPerformance() {

@@ -3,16 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/kothar/go-backblaze.v0"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 func TestNewArchiverService_bench(t *testing.T) {
@@ -222,7 +223,6 @@ func TestArchiverService_DBAndB2Gap(t *testing.T) {
 		B2:          b2Opts,
 		Reader: domain.ReaderOptions{
 			DB:          dbOpts,
-			B2:          b2Opts,
 			ReaderName:  "archiver_reader",
 			BatchSize:   50,
 			BufferSize:  100_000,

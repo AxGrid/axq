@@ -7,6 +7,8 @@ package axq
 import (
 	"context"
 	"fmt"
+	"os"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/service"
 	"github.com/axgrid/axq/utils"
@@ -38,6 +40,7 @@ func NewArchiver() *ArchiverBuilder {
 		dbHost:     "localhost",
 		dbPort:     3306,
 		opts: domain.ArchiverOptions{
+			Prefix: "test",
 			BaseOptions: domain.BaseOptions{
 				Name:   "unnamed",
 				CTX:    context.Background(),
@@ -49,14 +52,24 @@ func NewArchiver() *ArchiverBuilder {
 				},
 			},
 			B2: domain.B2Options{
+				Credentials: backblaze.Credentials{
+					ApplicationKey: os.Getenv("AX_TEST_B2_APP_KEY"),
+					KeyID:          os.Getenv("AX_TEST_B2_KEY_ID"),
+				},
+				Salt:     "ohShomu8abue9EiT",
+				Endpoint: "",
 				Compression: domain.CompressionOptions{
 					Compression: domain.BLOB_COMPRESSION_GZIP,
 				},
-				Salt: "ohShomu8abue9EiT",
 			},
-			MaxCount:  5_000_000,
-			MaxSize:   1_000_000,
-			ChunkSize: 2_000,
+			Reader: domain.ReaderOptions{
+				LoaderCount: 5,
+				WaiterCount: 1,
+			},
+			OuterCount: 2,
+			MaxCount:   1_000,
+			MaxSize:    1_000_000,
+			ChunkSize:  1_000,
 		},
 	}
 }

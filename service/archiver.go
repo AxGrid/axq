@@ -8,6 +8,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
@@ -17,32 +20,25 @@ import (
 	"github.com/speps/go-hashids"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
-	"sort"
-	"sync/atomic"
-	"time"
 )
 
 type ArchiverService struct {
-	opts        domain.ArchiverOptions
-	db          *gorm.DB
-	logger      zerolog.Logger
-	counter     *CounterService
-	fidCounter  *CounterService
-	tableName   string
-	dbAes       *utils.AES
-	b2Aes       *utils.AES
-	b2Bucket    *backblaze.Bucket
-	b2Auth      string
-	hashId      *hashids.HashID
-	reader      *ReaderService
-	ctx         context.Context
-	cancelFn    context.CancelFunc
-	outChan     chan *protobuf.Blob
-	currentBlob *protobuf.Blob
-	sortChan    chan messageIds
-	sortedIds   []messageIds
-
+	opts                 domain.ArchiverOptions
+	db                   *gorm.DB
+	logger               zerolog.Logger
+	tableName            string
+	counters             *CounterService
+	dbAes                *utils.AES
+	b2Aes                *utils.AES
+	b2Bucket             *backblaze.Bucket
+	hashId               *hashids.HashID
+	reader               *ReaderService
+	ctx                  context.Context
+	cancelFn             context.CancelFunc
+	outChan              chan *protobuf.Blob
+	currentBlob          *protobuf.Blob
 	messageList          *protobuf.BlobMessageList
+	blobIdsChan          chan domain.BlobIDs
 	b2Fid                uint64
 	lastDeprecateDeleted uint64
 }
@@ -50,19 +46,17 @@ type ArchiverService struct {
 func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	ctx, cancelFn := context.WithCancel(opts.CTX)
 	r := &ArchiverService{
-		opts:     opts,
-		logger:   opts.Logger.With().Str("name", opts.Name).Logger(),
-		db:       opts.DB.DB,
-		ctx:      ctx,
-		cancelFn: cancelFn,
-		sortChan: make(chan messageIds, 1),
-		outChan:  make(chan *protobuf.Blob, 1),
+		opts:        opts,
+		logger:      opts.Logger.With().Str("name", opts.Name).Logger(),
+		db:          opts.DB.DB,
+		ctx:         ctx,
+		cancelFn:    cancelFn,
+		outChan:     make(chan *protobuf.Blob, 1000),
+		blobIdsChan: make(chan domain.BlobIDs, 1000),
 	}
-
-	if opts.B2.Endpoint == "" {
-		return nil, errors.New("b2 endpoint empty")
-	}
-
+	//if opts.B2.Endpoint == "" {
+	//	return nil, errors.New("b2 endpoint empty")
+	//}
 	if opts.B2.Salt != "" {
 		hashIdData := hashids.NewData()
 		hashIdData.Salt = opts.B2.Salt
@@ -73,15 +67,12 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 			return nil, err
 		}
 	}
-
-	var err error
-	r.b2Auth, err = utils.AuthorizeB2(opts.B2.Credentials)
-	if err != nil {
-		return nil, err
+	bucketName := fmt.Sprintf("axq-%s-%s", opts.Prefix, utils.GetMD5Hash([]byte(opts.Name), opts.B2.Salt))
+	if len(bucketName) > 63 {
+		bucketName = bucketName[:63]
 	}
-	go r.authorizeB2()
-
-	r.b2Bucket, err = r.createBucket("axqueue-" + utils.GetMD5Hash([]byte(opts.Name), opts.B2.Salt))
+	var err error
+	r.b2Bucket, err = r.createBucket(bucketName)
 	if err != nil {
 		return nil, err
 	}
@@ -115,41 +106,36 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		}
 		r.b2Aes = aes
 	}
-	archiverName := fmt.Sprintf("b2arch_%s", opts.Name)
-	r.counter, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db, false)
+	archiverName := fmt.Sprintf("b2_archiver_%s", opts.Name)
+	r.counters, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db, false) // B2 Counters
 	if err != nil {
 		return nil, err
 	}
-
-	r.fidCounter, err = NewCounterService(fmt.Sprintf("%s_fid", opts.Name), archiverName, opts.CTX, opts.Logger, r.db, false)
+	lastId, err := r.counters.Get()
 	if err != nil {
 		return nil, err
 	}
-	fid, err := r.fidCounter.Get()
-	if err != nil {
-		return nil, err
-	}
-	if fid.FID > 0 {
-		r.b2Fid = fid.FID
-	}
-	readerName := fmt.Sprintf("reader_%s", opts.Name)
+	r.b2Fid = lastId.FID
+	readerName := fmt.Sprintf("%s_reader", archiverName)
 	r.reader, err = NewReaderService(domain.ReaderOptions{
-		BaseOptions: opts.BaseOptions,
-		ReaderName:  readerName,
-		DB:          opts.DB,
-		B2:          opts.B2,
-		B2Bucket:    r.b2Bucket,
-		LoaderCount: opts.Reader.LoaderCount,
-		WaiterCount: opts.Reader.WaiterCount,
-		BufferSize:  5_000_000,
-		BatchSize:   50,
+		BaseOptions:  opts.BaseOptions,
+		ReaderName:   readerName,
+		DB:           opts.DB,
+		BufferSize:   100_000,
+		BatchSize:    1000,
+		LoaderCount:  opts.Reader.LoaderCount,
+		WaiterCount:  opts.Reader.WaiterCount,
+		StartFromEnd: opts.Reader.StartFromEnd,
+		LastId: &domain.LastIdOptions{
+			FID:    0,
+			LastId: lastId.Id,
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
 	go r.loader(0)
 	go r.sorter()
-	go r.cleaner()
 	for i := 0; i < opts.OuterCount; i++ {
 		go r.outer(i)
 	}
@@ -165,13 +151,10 @@ func (a *ArchiverService) loader(index int) {
 		case <-a.ctx.Done():
 			return
 		case msg := <-a.reader.C():
-			if msg.Id() <= a.counter.lastId.Id {
+			fmt.Println(msg.Id(), "READ", a.counters.lastId)
+			if msg.Id() <= a.counters.lastId.Id {
 				continue
 			}
-			if msg.Id()%10000 == 0 {
-				wlog.Info().Msgf("reader %d", msg.Id())
-			}
-
 			if a.currentBlob == nil {
 				fid := atomic.AddUint64(&a.b2Fid, 1)
 				wlog.Info().Uint64("fid", fid).Msg("new blob")
@@ -198,7 +181,7 @@ func (a *ArchiverService) loader(index int) {
 					wlog.Error().Err(err).Msg("fail calculate blob size")
 					continue
 				}
-				if size > int64(a.opts.MaxSize) || len(a.messageList.Messages) > a.opts.MaxCount {
+				if size > int64(a.opts.MaxSize) || len(a.messageList.Messages) >= a.opts.MaxCount {
 					a.outChan <- a.currentBlob
 					wlog.Info().Int64("size", size).Msgf("send blob %d", a.currentBlob.Fid)
 					a.currentBlob = nil
@@ -238,7 +221,7 @@ func (a *ArchiverService) outer(index int) {
 				wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail to get filename")
 				continue
 			}
-			blobMD5 := utils.GetMD5Hash(bts, "")
+			//blobMD5 := utils.GetMD5Hash(bts, "")
 			for {
 				_, err = a.b2Bucket.UploadFile(filename, metadata, bytes.NewBuffer(bts))
 				if err != nil {
@@ -247,38 +230,41 @@ func (a *ArchiverService) outer(index int) {
 					continue
 				}
 
-				for i := 0; i < 5; i++ {
-					b2File, err := utils.DownloadFileByName(a.b2Bucket.Name, a.opts.B2.Endpoint, filename)
-					if err != nil {
-						wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail to check uploaded file")
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-
-					if utils.GetMD5Hash(b2File, "") != blobMD5 {
-						wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail to check md5")
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-				}
+				//for i := 0; i < 5; i++ {
+				//	b2File, err := utils.DownloadFileByName(a.b2Bucket.Name, a.opts.B2.Endpoint, filename)
+				//	if err != nil {
+				//		wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail to check uploaded file")
+				//		time.Sleep(100 * time.Millisecond)
+				//		continue
+				//	}
+				//
+				//	if utils.GetMD5Hash(b2File, "") != blobMD5 {
+				//		wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail to check md5")
+				//		time.Sleep(100 * time.Millisecond)
+				//		continue
+				//	}
+				//}
 				wlog.Info().Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Str("filename", filename).Msg("successfully uploaded")
+				a.blobIdsChan <- domain.BlobIDs{
+					FID:    m.Fid,
+					FromId: m.FromId,
+					ToId:   m.ToId,
+				}
 				break
 			}
 
-			a.sortChan <- messageIds{
-				FromId: m.FromId,
-				ToId:   m.ToId,
-			}
-			//a.fidCounter.Set(m.Fid)
 		}
 	}
 }
 
 type messageIds struct {
+	FID    uint64
 	FromId uint64
 	ToId   uint64
 }
 
+// {FID: 200, FromId: 1000, ToId: 1010}
+// {FID: 201, FromId: 1011, ToId: 1020}
 func (a *ArchiverService) sorter() {
 	wlog := a.logger.With().Int("archiver-sort-worker", 0).Logger()
 	wlog.Debug().Msg("start sorter")
@@ -286,23 +272,20 @@ func (a *ArchiverService) sorter() {
 		select {
 		case <-a.ctx.Done():
 			return
-		case msgs := <-a.sortChan:
-			a.sortedIds = append(a.sortedIds, msgs)
-			sort.Slice(a.sortedIds, func(i, j int) bool {
-				return a.sortedIds[i].FromId < a.sortedIds[j].FromId
-			})
-
-			for _, s := range a.sortedIds {
-				if s.FromId <= a.counter.lastId.Id {
-					continue
+		case ids := <-a.blobIdsChan:
+			if a.counters.lastId.Id+1 != ids.FromId {
+				fmt.Println("SKIP", ids)
+				a.blobIdsChan <- ids
+				continue
+			}
+			fmt.Println("GLOBAL SET", ids)
+			for i := ids.FromId; i <= ids.ToId; i++ {
+				msgIds := domain.MessageIDs{
+					FID: ids.FID,
+					Id:  i,
 				}
-				if a.counter.lastId.Id+1 == s.FromId {
-					a.counter.lastId.Id = s.ToId
-				} else {
-					//a.counter.Set(s.ToId)
-					wlog.Info().Uint64("to-id", s.ToId).Msg("counter set new to-id")
-					break
-				}
+				a.counters.Set(msgIds)
+				fmt.Println("ITER SET", ids)
 			}
 		}
 	}
@@ -331,48 +314,6 @@ func (a *ArchiverService) createBucket(bucketName string) (*backblaze.Bucket, er
 
 	return bucket, nil
 }
-
-func (a *ArchiverService) cleaner() {
-	for {
-		select {
-		case <-a.ctx.Done():
-			return
-		case <-time.After(time.Duration(a.opts.CleanTimeout) * time.Second):
-			a.logger.Info().Uint64("last-id", a.counter.lastId.Id).Msg("cleaner started")
-			if a.counter.lastId.Id < a.opts.DeprecatedFrom {
-				continue
-			}
-			deleteTo := a.counter.lastId.Id - a.opts.DeprecatedFrom
-			if deleteTo > a.reader.lastId.Current()-a.opts.Intersection {
-				deleteTo = a.reader.lastId.Current() - a.opts.Intersection
-			}
-			a.logger.Info().Uint64("delete from", deleteTo).Msg("deprecate counted")
-			if err := a.db.Table(a.tableName).Where("to_id <= ?", deleteTo).Delete(&domain.Blob{}).Error; err != nil {
-				a.logger.Error().Err(err).Msg("err while deleting deprecated data")
-				continue
-			}
-			a.logger.Info().Uint64("to-id", deleteTo).Msg("successfully deleted deprecate data")
-			a.lastDeprecateDeleted = deleteTo
-		}
-	}
-}
-
-func (a *ArchiverService) authorizeB2() {
-	for {
-		select {
-		case <-a.ctx.Done():
-			return
-		case <-time.After(domain.B2TokenTTL * time.Hour):
-			token, err := utils.AuthorizeB2(a.opts.B2.Credentials)
-			if err != nil {
-				a.logger.Error().Err(err).Msg("cant update b2 auth token")
-				continue
-			}
-			a.b2Auth = token
-		}
-	}
-}
-
 func (a *ArchiverService) calculateBlobSize() (size int64, err error) {
 	a.currentBlob.Messages, err = proto.Marshal(a.messageList)
 	if err != nil {
