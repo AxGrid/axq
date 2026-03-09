@@ -132,7 +132,7 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", r.tableName, err))
 		}
 	}
-	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd)
+	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd, opts.StartFromEndEveryTime)
 	if err != nil {
 		return nil, err
 	}

@@ -8,11 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
 type CounterService struct {
@@ -24,7 +25,7 @@ type CounterService struct {
 	lastIdChan       chan domain.MessageIDs
 }
 
-func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd bool) (*CounterService, error) {
+func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd, StartFromEndEveryTime bool) (*CounterService, error) {
 	r := &CounterService{
 		ctx:        ctx,
 		logger:     logger,
@@ -40,7 +41,7 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 	if r.lastId, err = r.Get(); err != nil {
 		return nil, err
 	}
-	if r.lastId.Id == 0 {
+	if r.lastId.Id == 0 || StartFromEndEveryTime {
 		if startFromEnd {
 			var blob domain.Blob
 			if err := r.db.Table(fmt.Sprintf("axq_%s", name)).Order("fid desc").First(&blob).Error; err != nil {

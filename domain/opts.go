@@ -88,6 +88,7 @@ type ReaderOptions struct {
 	WaiterCount  int
 	LastId       *LastIdOptions
 	StartFromEnd bool
+	StartFromEndEveryTime bool
 }
 
 func (r *ReaderOptions) GetType() string {
