@@ -89,6 +89,7 @@ type ReaderOptions struct {
 	LastId       *LastIdOptions
 	StartFromEnd bool
 	FromLatest   bool
+	StartFromEndEveryTime bool
 }
 
 func (r *ReaderOptions) GetType() string {

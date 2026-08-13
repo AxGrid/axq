@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
@@ -12,8 +15,6 @@ import (
 	"github.com/speps/go-hashids"
 	"gopkg.in/kothar/go-backblaze.v0"
 	"gorm.io/gorm"
-	"sync/atomic"
-	"time"
 )
 
 type B2ReaderService struct {
@@ -67,7 +68,7 @@ func NewB2ReaderService(opts domain.B2ReaderOptions) (*B2ReaderService, error) {
 		return nil, err
 	}
 
-	b2r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, b2r.db, false)
+	b2r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, b2r.db, false, false)
 	if err != nil {
 		return nil, err
 	}

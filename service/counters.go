@@ -25,7 +25,11 @@ type CounterService struct {
 	lastIdChan       chan domain.MessageIDs
 }
 
+<<<<<<< HEAD
 func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd, fromLatest bool) (*CounterService, error) {
+=======
+func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd, StartFromEndEveryTime bool) (*CounterService, error) {
+>>>>>>> refs/remotes/origin/main
 	r := &CounterService{
 		ctx:        ctx,
 		logger:     logger,
@@ -41,7 +45,7 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 	if r.lastId, err = r.Get(); err != nil {
 		return nil, err
 	}
-	if r.lastId.Id == 0 {
+	if r.lastId.Id == 0 || StartFromEndEveryTime {
 		if startFromEnd {
 			blob, err := r.lastBlob(name)
 			if err != nil {

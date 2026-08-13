@@ -128,6 +128,11 @@ func (b *ReaderBuilder) WithWorkerFunc(count int, f domain.WorkerFunc) *ReaderBu
 	return b
 }
 
+func (b *ReaderBuilder) WithStartFromEndEveryAfterRestart() *ReaderBuilder {
+	b.opts.StartFromEnd = true
+	b.opts.StartFromEndEveryTime = true
+	return b
+}
 func (b *ReaderBuilder) WithStartFromEnd() *ReaderBuilder {
 	b.opts.StartFromEnd = true
 	return b

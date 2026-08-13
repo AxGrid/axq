@@ -84,7 +84,9 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	}
 	tableName := fmt.Sprintf("axq_%s", opts.Name)
 	if !w.db.Migrator().HasTable(tableName) {
+		var err error
 		opts.Logger.Debug().Str("table", tableName).Msg("create table")
+<<<<<<< HEAD
 		table := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB")
 		if w.opts.PartitionsCount > 1 {
 			partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
@@ -92,6 +94,17 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 		}
 		if err := table.AutoMigrate(domain.Blob{}); err != nil {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
+=======
+		if w.opts.PartitionsCount <= 1 {
+			if err = w.db.Table(tableName).AutoMigrate(domain.Blob{}); err != nil {
+				return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
+			}
+		} else {
+			partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
+			if err = w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB").Set("gorm:table_options", partitionsValue).AutoMigrate(domain.Blob{}); err != nil {
+				return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
+			}
+>>>>>>> refs/remotes/origin/main
 		}
 	}
 	w.tableName = tableName
