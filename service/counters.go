@@ -8,11 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
 type CounterService struct {
@@ -24,7 +25,7 @@ type CounterService struct {
 	lastIdChan       chan domain.MessageIDs
 }
 
-func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd bool) (*CounterService, error) {
+func NewCounterService(name, readerName string, ctx context.Context, logger zerolog.Logger, db *gorm.DB, startFromEnd, fromLatest bool) (*CounterService, error) {
 	r := &CounterService{
 		ctx:        ctx,
 		logger:     logger,
@@ -42,15 +43,11 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 	}
 	if r.lastId.Id == 0 {
 		if startFromEnd {
-			var blob domain.Blob
-			if err := r.db.Table(fmt.Sprintf("axq_%s", name)).Order("fid desc").First(&blob).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					if err = r.createCounter(0, 0); err != nil {
-						return nil, err
-					}
-					return r, nil
+			blob, err := r.lastBlob(name)
+			if err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, err
 				}
-				return nil, err
 			}
 			if err = r.createCounter(blob.FID, blob.ToId); err != nil {
 				return nil, err
@@ -66,7 +63,21 @@ func NewCounterService(name, readerName string, ctx context.Context, logger zero
 			return nil, err
 		}
 	}
-
+	if fromLatest {
+		blob, err := r.lastBlob(name)
+		if err != nil {
+			return nil, err
+		}
+		r.lastId = domain.MessageIDs{
+			FID: blob.FID,
+			Id:  blob.ToId,
+		}
+	}
+	// todo startMin
+	// получаем текущий каунтер
+	// получаем минимальный блоб
+	// если блоб > мин каунтера
+	// мин каунтер = блоб
 	go r.set()
 	go r.save()
 	return r, nil
@@ -156,4 +167,12 @@ func (r *CounterService) saveData(ids domain.MessageIDs) error {
 		"id":  ids.Id,
 		"fid": ids.FID,
 	}).Error
+}
+
+func (r *CounterService) lastBlob(name string) (domain.Blob, error) {
+	var blob domain.Blob
+	if err := r.db.Table(fmt.Sprintf("axq_%s", name)).Order("fid desc").First(&blob).Error; err != nil {
+		return blob, err
+	}
+	return blob, nil
 }

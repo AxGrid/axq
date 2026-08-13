@@ -8,13 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/protobuf"
 	"github.com/axgrid/axq/utils"
 	"github.com/golang/protobuf/proto"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
-	"time"
 )
 
 type dataHolder struct {
@@ -84,8 +85,12 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	tableName := fmt.Sprintf("axq_%s", opts.Name)
 	if !w.db.Migrator().HasTable(tableName) {
 		opts.Logger.Debug().Str("table", tableName).Msg("create table")
-		partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
-		if err := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB").Set("gorm:table_options", partitionsValue).AutoMigrate(domain.Blob{}); err != nil {
+		table := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB")
+		if w.opts.PartitionsCount > 1 {
+			partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
+			table.Set("gorm:table_options", partitionsValue)
+		}
+		if err := table.AutoMigrate(domain.Blob{}); err != nil {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
 		}
 	}
