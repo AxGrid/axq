@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/axgrid/axq/domain"
@@ -36,7 +37,7 @@ type WriterService struct {
 	cancelFunc     context.CancelFunc
 	ctx            context.Context
 	performance    uint64
-	stopped        bool
+	stopped        atomic.Bool
 }
 
 func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
@@ -86,25 +87,15 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	if !w.db.Migrator().HasTable(tableName) {
 		var err error
 		opts.Logger.Debug().Str("table", tableName).Msg("create table")
-<<<<<<< HEAD
-		table := w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB")
-		if w.opts.PartitionsCount > 1 {
-			partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
-			table.Set("gorm:table_options", partitionsValue)
-		}
-		if err := table.AutoMigrate(domain.Blob{}); err != nil {
-			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
-=======
 		if w.opts.PartitionsCount <= 1 {
 			if err = w.db.Table(tableName).AutoMigrate(domain.Blob{}); err != nil {
 				return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
 			}
 		} else {
-			partitionsValue := fmt.Sprintf("PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
-			if err = w.db.Table(tableName).Set("gorm:table_options", "ENGINE=InnoDB").Set("gorm:table_options", partitionsValue).AutoMigrate(domain.Blob{}); err != nil {
+			tableOptions := fmt.Sprintf("ENGINE=InnoDB PARTITION BY KEY (fid) PARTITIONS %d", w.opts.PartitionsCount)
+			if err = w.db.Table(tableName).Set("gorm:table_options", tableOptions).AutoMigrate(domain.Blob{}); err != nil {
 				return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", tableName, err))
 			}
->>>>>>> refs/remotes/origin/main
 		}
 	}
 	w.tableName = tableName
@@ -123,15 +114,12 @@ func NewWriterService(opts domain.WriterOptions) (*WriterService, error) {
 	}
 	go w.save()
 	go w.create()
-	if opts.CutSize > 0 {
-		go w.cutter()
-	}
 	go w.countPerformance()
 	return w, nil
 }
 
 func (w *WriterService) Close() {
-	w.stopped = true
+	w.stopped.Store(true)
 	for {
 		if len(w.inChan) == 0 {
 			break
@@ -141,7 +129,7 @@ func (w *WriterService) Close() {
 }
 
 func (w *WriterService) Push(message []byte) error {
-	if w.stopped {
+	if w.stopped.Load() {
 		return errors.New("writer stopped")
 	}
 	holder := &dataHolder{
@@ -153,7 +141,7 @@ func (w *WriterService) Push(message []byte) error {
 }
 
 func (w *WriterService) PushMany(messages [][]byte) error {
-	if w.stopped {
+	if w.stopped.Load() {
 		return errors.New("writer stopped")
 	}
 	var holders = make([]*dataHolder, len(messages))
@@ -174,7 +162,7 @@ func (w *WriterService) PushMany(messages [][]byte) error {
 }
 
 func (w *WriterService) PushProto(message proto.Message) error {
-	if w.stopped {
+	if w.stopped.Load() {
 		return errors.New("writer stopped")
 	}
 	messageBytes, err := proto.Marshal(message)
@@ -185,7 +173,7 @@ func (w *WriterService) PushProto(message proto.Message) error {
 }
 
 func (w *WriterService) PushProtoMany(messages []proto.Message) error {
-	if w.stopped {
+	if w.stopped.Load() {
 		return errors.New("writer stopped")
 	}
 	var err error
@@ -264,7 +252,7 @@ func (w *WriterService) Counter() (uint64, error) {
 }
 
 func (w *WriterService) Performance() uint64 {
-	return w.performance
+	return atomic.LoadUint64(&w.performance)
 }
 
 func (w *WriterService) save() {
@@ -306,8 +294,8 @@ func (w *WriterService) save() {
 			for _, msg := range blobList {
 				msg.response <- nil
 			}
-			w.fid = blob.FID
-			w.lastId = blob.ToId
+			atomic.StoreUint64(&w.fid, blob.FID)
+			atomic.StoreUint64(&w.lastId, blob.ToId)
 			w.logger.Debug().Int("size", len(bCreate.blob.Message)).Uint64("fid", bCreate.blob.FID).Uint64("from-id", bCreate.blob.FromId).Uint64("to-id", bCreate.blob.ToId).Int("total", bCreate.blob.Total).Msg("create blob")
 			w.logger.Debug().Uint64("fid", blob.FID).Msg("sent to create blob chan")
 		}
@@ -318,7 +306,7 @@ func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
 	list := &protobuf.BlobMessageList{
 		Messages: make([]*protobuf.BlobMessage, len(blobList)),
 	}
-	messageLastId := w.lastId
+	messageLastId := atomic.LoadUint64(&w.lastId)
 	for i, data := range blobList {
 		messageLastId++
 		list.Messages[i] = &protobuf.BlobMessage{
@@ -346,7 +334,7 @@ func (w *WriterService) prepare(blobList []*dataHolder) (*domain.Blob, error) {
 	}
 
 	blob := &domain.Blob{
-		FID:         w.fid + 1,
+		FID:         atomic.LoadUint64(&w.fid) + 1,
 		Compression: w.opts.DB.Compression.Compression,
 		Encryption:  w.opts.DB.Compression.Encryption,
 		Total:       len(list.Messages),
@@ -380,35 +368,16 @@ func (w *WriterService) create() {
 	}
 }
 
-func (w *WriterService) cutter() {
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case <-time.After(w.opts.CutFrequency):
-			lastId, err := w.LastID()
-			if err != nil {
-				continue
-			}
-			if lastId <= uint64(w.opts.CutSize) {
-				continue
-			}
-			if err = w.db.Table(w.tableName).Where("to_id < ?", lastId-uint64(w.opts.CutSize)).Delete(&domain.Blob{}).Error; err != nil {
-				continue
-			}
-		}
-	}
-}
-
 func (w *WriterService) countPerformance() {
-	prevLastId := w.lastId
+	prevLastId := atomic.LoadUint64(&w.lastId)
 	for {
 		select {
 		case <-w.ctx.Done():
 			return
 		case <-time.After(time.Second):
-			w.performance = w.lastId - prevLastId
-			prevLastId = w.lastId
+			last := atomic.LoadUint64(&w.lastId)
+			atomic.StoreUint64(&w.performance, last-prevLastId)
+			prevLastId = last
 		}
 	}
 }

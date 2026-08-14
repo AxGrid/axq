@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"github.com/axgrid/axq/utils"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"gorm.io/driver/mysql"
@@ -28,7 +29,10 @@ var (
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "2006-01-02 15:04:05"}).Level(zerolog.ErrorLevel)
-	gLogger := utils.NewGLogger(log.Logger, true).LogMode(logger.Info)
+	// драйвер и gorm иначе засоряют вывод бенчмарков своими ошибками при
+	// штатной отмене контекста на выходе из теста
+	mysqldriver.SetLogger(nopLogger{})
+	gLogger := utils.NewGLogger(log.Logger, true).LogMode(logger.Silent)
 	connectionString := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True&loc=Local", dbUser, dbPassword, dbHost, dbPort, dbName)
 	var err error
 	testDataBase, err = gorm.Open(mysql.Open(connectionString), &gorm.Config{Logger: gLogger, DisableForeignKeyConstraintWhenMigrating: true})
@@ -37,6 +41,10 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(m.Run())
 }
+
+type nopLogger struct{}
+
+func (nopLogger) Print(...interface{}) {}
 
 func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {

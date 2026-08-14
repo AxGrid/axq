@@ -16,7 +16,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"time"
 )
 
 type Writer interface {
@@ -103,16 +102,6 @@ func (b *WriterBuilder) WithMaxBlobSize(size int) *WriterBuilder {
 
 func (b *WriterBuilder) WithPartitionsCount(count int) *WriterBuilder {
 	b.opts.PartitionsCount = count
-	return b
-}
-
-func (b *WriterBuilder) WithCutFrequency(t time.Duration) *WriterBuilder {
-	b.opts.CutFrequency = t
-	return b
-}
-
-func (b *WriterBuilder) WithCutSize(size int) *WriterBuilder {
-	b.opts.CutSize = size
 	return b
 }
 

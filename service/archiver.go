@@ -23,24 +23,25 @@ import (
 )
 
 type ArchiverService struct {
-	opts                 domain.ArchiverOptions
-	db                   *gorm.DB
-	logger               zerolog.Logger
-	tableName            string
-	counters             *CounterService
-	dbAes                *utils.AES
-	b2Aes                *utils.AES
-	b2Bucket             *backblaze.Bucket
-	hashId               *hashids.HashID
-	reader               *ReaderService
-	ctx                  context.Context
-	cancelFn             context.CancelFunc
-	outChan              chan *protobuf.Blob
-	currentBlob          *protobuf.Blob
-	messageList          *protobuf.BlobMessageList
-	blobIdsChan          chan domain.BlobIDs
-	b2Fid                uint64
-	lastDeprecateDeleted uint64
+	opts        domain.ArchiverOptions
+	db          *gorm.DB
+	logger      zerolog.Logger
+	tableName   string
+	counters    *CounterService
+	dbAes       *utils.AES
+	b2Aes       *utils.AES
+	b2Bucket    *backblaze.Bucket
+	hashId      *hashids.HashID
+	reader      *ReaderService
+	ctx         context.Context
+	cancelFn    context.CancelFunc
+	outChan     chan *protobuf.Blob
+	currentBlob *protobuf.Blob
+	messageList *protobuf.BlobMessageList
+	rawSize     int64
+	packRatio   float64
+	blobIdsChan chan domain.BlobIDs
+	b2Fid       uint64
 }
 
 func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
@@ -51,7 +52,8 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		db:          opts.DB.DB,
 		ctx:         ctx,
 		cancelFn:    cancelFn,
-		outChan:     make(chan *protobuf.Blob, 1000),
+		packRatio:   1,
+		outChan:     make(chan *protobuf.Blob, outChanSize(opts.OuterCount)),
 		blobIdsChan: make(chan domain.BlobIDs, 1000),
 	}
 	//if opts.B2.Endpoint == "" {
@@ -107,7 +109,7 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		r.b2Aes = aes
 	}
 	archiverName := fmt.Sprintf("b2_archiver_%s", opts.Name)
-	r.counters, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db, false, false) // B2 Counters
+	r.counters, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db, false, false, false) // B2 Counters
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +118,11 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		return nil, err
 	}
 	r.b2Fid = lastId.FID
+	startFid, err := r.readerStartFID(lastId.Id)
+	if err != nil {
+		return nil, err
+	}
+	r.logger.Info().Uint64("last-id", lastId.Id).Uint64("start-fid", startFid).Msg("archiver reader start position")
 	readerName := fmt.Sprintf("%s_reader", archiverName)
 	r.reader, err = NewReaderService(domain.ReaderOptions{
 		BaseOptions:  opts.BaseOptions,
@@ -127,7 +134,7 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		WaiterCount:  opts.Reader.WaiterCount,
 		StartFromEnd: opts.Reader.StartFromEnd,
 		LastId: &domain.LastIdOptions{
-			FID:    0,
+			FID:    startFid,
 			LastId: lastId.Id,
 		},
 	})
@@ -143,6 +150,30 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	return r, nil
 }
 
+// readerStartFID подбирает блоб таблицы, с которого архиверу продолжать чтение.
+// В счётчике архивера поле FID — это номер блоба в B2, а не в базе, поэтому
+// DB-позицию приходится искать по id последнего заархивированного сообщения.
+func (a *ArchiverService) readerStartFID(lastId uint64) (uint64, error) {
+	var blob domain.Blob
+	err := a.db.Table(a.tableName).Where("to_id >= ?", lastId).Order("fid asc").First(&blob).Error
+	if err == nil {
+		return blob.FID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	// заархивированное уже вырезано из таблицы — начинаем с самого старого
+	// сохранившегося блоба
+	err = a.db.Table(a.tableName).Order("fid asc").First(&blob).Error
+	if err == nil {
+		return blob.FID, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	return 0, err
+}
+
 func (a *ArchiverService) loader(index int) {
 	wlog := a.logger.With().Int("archiver loader", index).Logger()
 	wlog.Debug().Msg("start archiver loader")
@@ -151,7 +182,10 @@ func (a *ArchiverService) loader(index int) {
 		case <-a.ctx.Done():
 			return
 		case msg := <-a.reader.C():
-			if msg.Id() <= a.counters.lastId.Id {
+			if msg.Id() <= a.counters.Last().Id {
+				// уже заархивировано: подтвердить обязательно, иначе воркер
+				// ридера навсегда останется висеть на своём ack
+				msg.Done()
 				continue
 			}
 			if a.currentBlob == nil {
@@ -166,28 +200,35 @@ func (a *ArchiverService) loader(index int) {
 				a.messageList = &protobuf.BlobMessageList{
 					Fid: fid,
 				}
+				a.rawSize = 0
 			}
 			a.currentBlob.ToId = msg.Id()
-			a.messageList.Messages = append(a.messageList.Messages, &protobuf.BlobMessage{
+			blobMessage := &protobuf.BlobMessage{
 				Id:      msg.Id(),
 				Message: msg.Message(),
-			})
+			}
+			a.messageList.Messages = append(a.messageList.Messages, blobMessage)
+			a.rawSize += int64(proto.Size(blobMessage))
 			msg.Done()
 
-			if len(a.messageList.Messages)%a.opts.ChunkSize == 0 {
-				size, err := a.calculateBlobSize()
-				if err != nil {
-					wlog.Error().Err(err).Msg("fail calculate blob size")
-					continue
-				}
-				if size > int64(a.opts.MaxSize) || len(a.messageList.Messages) >= a.opts.MaxCount {
-					a.outChan <- a.currentBlob
-					wlog.Info().Int64("size", size).Msgf("send blob %d", a.currentBlob.Fid)
-					a.currentBlob = nil
-					a.messageList = nil
-					continue
-				}
+			if !a.readyToPack() {
+				continue
 			}
+			packed, err := a.packBlob()
+			if err != nil {
+				wlog.Error().Err(err).Msg("fail pack blob")
+				continue
+			}
+			if int64(len(packed)) <= int64(a.opts.MaxSize) && len(a.messageList.Messages) < a.opts.MaxCount {
+				continue
+			}
+			a.currentBlob.Messages = packed
+			a.currentBlob.Count = uint64(len(a.messageList.Messages))
+			a.outChan <- a.currentBlob
+			wlog.Info().Int("size", len(packed)).Msgf("send blob %d", a.currentBlob.Fid)
+			a.currentBlob = nil
+			a.messageList = nil
+			a.rawSize = 0
 		}
 	}
 }
@@ -203,6 +244,7 @@ func (a *ArchiverService) outer(index int) {
 			bts, err := proto.Marshal(m)
 			if err != nil {
 				wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail to marshall proto")
+				continue
 			}
 			metadata := make(map[string]string)
 			if a.hashId != nil {
@@ -225,7 +267,11 @@ func (a *ArchiverService) outer(index int) {
 				_, err = a.b2Bucket.UploadFile(filename, metadata, bytes.NewBuffer(bts))
 				if err != nil {
 					wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail upload blob")
-					time.Sleep(100 * time.Millisecond)
+					select {
+					case <-a.ctx.Done():
+						return
+					case <-time.After(100 * time.Millisecond):
+					}
 					continue
 				}
 
@@ -244,10 +290,14 @@ func (a *ArchiverService) outer(index int) {
 				//	}
 				//}
 				wlog.Info().Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Str("filename", filename).Msg("successfully uploaded")
-				a.blobIdsChan <- domain.BlobIDs{
+				select {
+				case <-a.ctx.Done():
+					return
+				case a.blobIdsChan <- domain.BlobIDs{
 					FID:    m.Fid,
 					FromId: m.FromId,
 					ToId:   m.ToId,
+				}:
 				}
 				break
 			}
@@ -256,32 +306,33 @@ func (a *ArchiverService) outer(index int) {
 	}
 }
 
-type messageIds struct {
-	FID    uint64
-	FromId uint64
-	ToId   uint64
-}
-
+// sorter коммитит залитые блобы строго по возрастанию id. Воркеры outer
+// заливают параллельно и приходят сюда в произвольном порядке, поэтому блоб с
+// разрывом ждёт в waitMap, а не возвращается обратно в канал.
+//
 // {FID: 200, FromId: 1000, ToId: 1010}
 // {FID: 201, FromId: 1011, ToId: 1020}
 func (a *ArchiverService) sorter() {
+	waitMap := map[uint64]domain.BlobIDs{}
+	nextId := a.counters.Last().Id + 1
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
 		case ids := <-a.blobIdsChan:
-			if a.counters.lastId.Id+1 != ids.FromId {
-				a.blobIdsChan <- ids
-				continue
-			}
-			for i := ids.FromId; i <= ids.ToId; i++ {
-				msgIds := domain.MessageIDs{
-					FID: ids.FID,
-					Id:  i,
+			waitMap[ids.FromId] = ids
+			for {
+				next, ok := waitMap[nextId]
+				if !ok {
+					break
 				}
-				a.counters.Set(msgIds)
+				delete(waitMap, next.FromId)
+				// диапазон блоба непрерывен, а сами блобы коммитятся по
+				// порядку, поэтому счётчик двигается одним шагом на весь блоб
+				a.counters.Commit(domain.MessageIDs{FID: next.FID, Id: next.ToId})
+				nextId = next.ToId + 1
+				a.logger.Info().Any("ids", next).Int("waiting", len(waitMap)).Msg("processed batch. set counters")
 			}
-			a.logger.Info().Any("ids", ids).Msg("processed batch. set counters")
 		}
 	}
 }
@@ -309,27 +360,50 @@ func (a *ArchiverService) createBucket(bucketName string) (*backblaze.Bucket, er
 
 	return bucket, nil
 }
-func (a *ArchiverService) calculateBlobSize() (size int64, err error) {
-	a.currentBlob.Messages, err = proto.Marshal(a.messageList)
+
+// readyToPack сообщает, есть ли смысл упаковывать текущий блоб. Размер после
+// сжатия и шифрования оценивается по packRatio, измеренному на предыдущей
+// упаковке, поэтому блоб пакуется считанные разы, а не раз в ChunkSize
+// сообщений.
+func (a *ArchiverService) readyToPack() bool {
+	if len(a.messageList.Messages) >= a.opts.MaxCount {
+		return true
+	}
+	return float64(a.rawSize)*a.packRatio > float64(a.opts.MaxSize)
+}
+
+// packBlob маршалит, сжимает и шифрует накопленные сообщения и уточняет
+// packRatio по фактическому результату.
+func (a *ArchiverService) packBlob() ([]byte, error) {
+	data, err := proto.Marshal(a.messageList)
 	if err != nil {
-		return
+		return nil, err
 	}
 	switch a.opts.B2.Compression.Compression {
 	case domain.BLOB_COMPRESSION_GZIP:
-		a.currentBlob.Messages, err = utils.GZipData(a.currentBlob.Messages)
-		if err != nil {
-			return
+		if data, err = utils.GZipData(data); err != nil {
+			return nil, err
 		}
 	}
 	switch a.opts.B2.Compression.Encryption {
 	case domain.BLOB_ENCRYPTION_AES:
-		a.currentBlob.Messages, err = a.b2Aes.Encrypt(a.currentBlob.Messages)
-		if err != nil {
-			return
+		if data, err = a.b2Aes.Encrypt(data); err != nil {
+			return nil, err
 		}
 	}
-	size = int64(len(a.currentBlob.Messages))
-	return
+	if a.rawSize > 0 {
+		a.packRatio = float64(len(data)) / float64(a.rawSize)
+	}
+	return data, nil
+}
+
+// outChanSize ограничивает число готовых блобов, ожидающих заливки: каждый из
+// них держит в памяти полный упакованный payload размером до MaxSize.
+func outChanSize(outerCount int) int {
+	if outerCount < 1 {
+		return 2
+	}
+	return outerCount * 2
 }
 
 func (a *ArchiverService) Close() {

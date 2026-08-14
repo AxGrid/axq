@@ -6,7 +6,6 @@ package domain
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -61,8 +60,6 @@ type WriterOptions struct {
 	DB              DataBaseOptions
 	PartitionsCount int
 	MaxBlobSize     int
-	CutSize         int
-	CutFrequency    time.Duration
 	UUID            uuid.UUID
 }
 
@@ -80,15 +77,15 @@ func (w *WriterOptions) GetReaderName() string {
 
 type ReaderOptions struct {
 	BaseOptions
-	DB           DataBaseOptions
-	ReaderName   string
-	BufferSize   int
-	BatchSize    uint64
-	LoaderCount  int
-	WaiterCount  int
-	LastId       *LastIdOptions
-	StartFromEnd bool
-	FromLatest   bool
+	DB                    DataBaseOptions
+	ReaderName            string
+	BufferSize            int
+	BatchSize             uint64
+	LoaderCount           int
+	WaiterCount           int
+	LastId                *LastIdOptions
+	StartFromEnd          bool
+	FromLatest            bool
 	StartFromEndEveryTime bool
 }
 
@@ -122,17 +119,14 @@ type LastIdOptions struct {
 
 type ArchiverOptions struct {
 	BaseOptions
-	DB             DataBaseOptions
-	B2             B2Options
-	Reader         ReaderOptions
-	Prefix         string
-	ChunkSize      int
-	MaxSize        int
-	MaxCount       int
-	OuterCount     int
-	CleanTimeout   int
-	Intersection   uint64
-	DeprecatedFrom uint64
+	DB         DataBaseOptions
+	B2         B2Options
+	Reader     ReaderOptions
+	Prefix     string
+	ChunkSize  int
+	MaxSize    int
+	MaxCount   int
+	OuterCount int
 }
 
 type B2Options struct {

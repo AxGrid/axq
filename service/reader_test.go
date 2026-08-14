@@ -1,528 +1,432 @@
-/*
- * Created by Zed 06.12.2023, 15:20
- */
-
 package service
 
 import (
 	"context"
 	"fmt"
-	"github.com/axgrid/axq/domain"
-	"github.com/axgrid/axq/protobuf"
-	"github.com/axgrid/axq/utils"
-	"github.com/rs/zerolog/log"
-	"github.com/stretchr/testify/assert"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/axgrid/axq/domain"
 )
 
-func TestNewReaderService_read(t *testing.T) {
+// R1: базовый инвариант — прочитано ровно то, что записано, по возрастанию,
+// без дублей и пропусков.
+func TestReader_ReadsEverythingInOrder(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	const n = 1000
+	pushN(t, w, n)
 
-	base := domain.BaseOptions{
-		Name:   "test",
-		Logger: log.Logger,
-		CTX:    context.Background(),
+	r := newReader(t, readerOpts(t, name))
+	ids := readIDs(t, r, n, 30*time.Second)
+
+	assertContiguous(t, ids, 1)
+	assertAscending(t, ids)
+}
+
+// R2: ридер, поднятый раньше райтера, обязан дождаться хвоста, а не сдаться.
+func TestReader_WaitsForTail(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name)) // создаёт пустую таблицу
+	r := newReader(t, readerOpts(t, name))
+
+	expectNothing(t, r, 300*time.Millisecond)
+
+	const n = 100
+	pushN(t, w, n)
+
+	ids := readIDs(t, r, n, 30*time.Second)
+	assertContiguous(t, ids, 1)
+}
+
+// R15: на пустой очереди ридер просто ждёт и ничего не выдумывает.
+func TestReader_EmptyQueueStaysQuiet(t *testing.T) {
+	name := testQueue(t)
+	newWriter(t, writerOpts(t, name))
+
+	r := newReader(t, readerOpts(t, name))
+	expectNothing(t, r, time.Second)
+}
+
+// R3: перезапуск с тем же именем продолжает с сохранённой позиции, а не
+// перечитывает очередь заново.
+func TestReader_RestartContinuesFromCounter(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 200)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opts := readerOpts(t, name)
+	opts.CTX = ctx
+	first := newReader(t, opts)
+	readIDs(t, first, 100, 30*time.Second)
+
+	// счётчик сбрасывается в базу раз в 3 секунды
+	time.Sleep(4 * time.Second)
+	cancel()
+	time.Sleep(200 * time.Millisecond)
+
+	second := newReader(t, readerOpts(t, name))
+	ids := readIDs(t, second, 100, 30*time.Second)
+
+	if ids[0] <= 100 {
+		t.Fatalf("после перезапуска пришёл id=%d — очередь перечитывается с начала", ids[0])
 	}
-	db := testDataBase
-	dbOpts := domain.DataBaseOptions{
-		DB: db,
-		Compression: domain.CompressionOptions{
-			Compression:   domain.BLOB_COMPRESSION_GZIP,
-			Encryption:    domain.BLOB_ENCRYPTION_AES,
-			EncryptionKey: []byte("12345678901234567890123456789012"),
-		},
+	assertAscending(t, ids)
+}
+
+// R4: сообщения, не подтверждённые до падения, обязаны прийти снова —
+// это at-least-once, ради которого счётчик и двигается только по ack.
+func TestReader_UnackedAreRedelivered(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 50)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opts := readerOpts(t, name)
+	opts.CTX = ctx
+
+	// выдающий воркер отдаёт следующее сообщение только после ack предыдущего,
+	// поэтому неподтверждённым можно удержать ровно одно
+	first := newReader(t, opts)
+	var unacked uint64
+	select {
+	case m := <-first.C():
+		unacked = m.Id()
+		// намеренно без Done — имитируем падение потребителя
+	case <-time.After(30 * time.Second):
+		t.Fatal("не дождались сообщения")
 	}
+	cancel()
+	time.Sleep(4 * time.Second) // дать счётчику шанс сохраниться
 
-	//Обнуление таблицы
-	err := db.Exec("DELETE FROM `axq_lima-test`").Error
-	assert.Nil(t, err)
-
-	//Обнуление last id
-	err = db.Model(&domain.BlobCounter{}).Where("reader_name = ? AND name = ?", "reader_test", "test").Update("id", 0).Error
-	assert.Nil(t, err)
-
-	// Запись 100к строк
-	lines := 100_000
-	opts := domain.WriterOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "lima-test",
-			Logger: log.Logger,
-			CTX:    context.Background(),
-		},
-		DB: domain.DataBaseOptions{
-			DB: db,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		MaxBlobSize:     10000,
-		PartitionsCount: 2,
-	}
-	w, err := NewWriterService(opts)
-	if !assert.Nil(t, err) {
-		t.Fatal(err)
-	}
-	assert.NotNil(t, w)
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < lines; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			err = w.Push([]byte(fmt.Sprintf("test_%d", i)))
-			if !assert.Nil(t, err) {
-				log.Error().Err(err).Msg("push error")
-				panic(err)
-			}
-		}(i)
-	}
-	wg.Wait()
-
-	reader, err := NewReaderService(domain.ReaderOptions{
-		BaseOptions: base,
-		DB:          dbOpts,
-		ReaderName:  "reader_test",
-		LoaderCount: 2,
-		WaiterCount: 2,
-		BatchSize:   50,
-		BufferSize:  100_000,
-	})
-	assert.Nil(t, err)
-	assert.NotNil(t, reader)
-
-	uniqueMap := make(map[uint64]int)
-	go func() {
-		for {
-			m := reader.Pop()
-			m.Done()
-			uniqueMap[m.Id()] = uniqueMap[m.Id()] + 1
+	second := newReader(t, readerOpts(t, name))
+	select {
+	case m := <-second.C():
+		defer m.Done()
+		if m.Id() > unacked {
+			t.Fatalf("после перезапуска пришёл id=%d, а неподтверждённым остался %d — сообщение потеряно", m.Id(), unacked)
 		}
-	}()
-	time.Sleep(15 * time.Second)
-
-	for _, v := range uniqueMap {
-		if v != 1 {
-			panic("error reading")
-		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("после перезапуска не пришло ничего")
 	}
 }
 
-func TestReaderService_loadDB(t *testing.T) {
-	loaders := 4
-	timeout := 5
-	ctx := context.Background()
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		DB: domain.DataBaseOptions{
-			DB: testDataBase,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		LoaderCount: loaders,
-	}
-	ctxt, _ := context.WithTimeout(ctx, time.Second*time.Duration(timeout))
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(t, err)
+// R9: Error возвращает сообщение в оборот, счётчик при этом стоять.
+func TestReader_ErrorRedelivers(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 10)
 
-	var lastFid uint64
+	r := newReader(t, readerOpts(t, name))
+
+	var first uint64
+	select {
+	case m := <-r.C():
+		first = m.Id()
+		m.Error(fmt.Errorf("обработчик не смог"))
+	case <-time.After(30 * time.Second):
+		t.Fatal("не дождались первого сообщения")
+	}
+
+	select {
+	case again := <-r.C():
+		defer again.Done()
+		if again.Id() != first {
+			t.Fatalf("после Error пришёл id=%d, ожидали повтор %d", again.Id(), first)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("после Error сообщение не вернулось")
+	}
+}
+
+// R5: StartFromEnd пропускает всё, что было записано до старта.
+func TestReader_StartFromEnd(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 100)
+
+	opts := readerOpts(t, name)
+	opts.StartFromEnd = true
+	r := newReader(t, opts)
+
+	expectNothing(t, r, 500*time.Millisecond)
+
+	if err := w.Push([]byte("свежее")); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	select {
+	case m := <-r.C():
+		defer m.Done()
+		if m.Id() != 101 {
+			t.Fatalf("пришёл id=%d, ожидали 101", m.Id())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("свежее сообщение не пришло")
+	}
+}
+
+// R8: явная позиция задаёт точку старта в обход счётчика.
+func TestReader_ExplicitLastId(t *testing.T) {
+	name := testQueue(t)
+	opts := writerOpts(t, name)
+	opts.MaxBlobSize = 10
+	w := newWriter(t, opts)
+	pushN(t, w, 100)
+
+	ropts := readerOpts(t, name)
+	ropts.LastId = &domain.LastIdOptions{FID: 6, LastId: 50}
+	r := newReader(t, ropts)
+
+	ids := readIDs(t, r, 50, 30*time.Second)
+	assertContiguous(t, ids, 51)
+}
+
+// R18: если стартовая позиция ниже реально прочитанного, блобы перечитываются.
+// Уже отданные id обязаны отсеиваться, а не копиться в waitMap — именно так
+// ридер съедал память на каждом рестарте архивера.
+func TestReader_RereadSkipsAlreadyDeliveredIDs(t *testing.T) {
+	name := testQueue(t)
+	opts := writerOpts(t, name)
+	opts.MaxBlobSize = 10
+	w := newWriter(t, opts)
+	pushN(t, w, 100)
+
+	// FID=1 заставляет загрузчики перечитать таблицу с самого начала,
+	// хотя позиция по сообщениям стоит на 50
+	ropts := readerOpts(t, name)
+	ropts.LastId = &domain.LastIdOptions{FID: 1, LastId: 50}
+	r := newReader(t, ropts)
+
+	ids := readIDs(t, r, 50, 30*time.Second)
+	for _, id := range ids {
+		if id <= 50 {
+			t.Fatalf("пришёл уже обработанный id=%d", id)
+		}
+	}
+	assertContiguous(t, ids, 51)
+}
+
+// R10: разные потребители читают один поток независимо друг от друга.
+func TestReader_IndependentReaderNames(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	const n = 100
+	pushN(t, w, n)
+
+	optsA := readerOpts(t, name)
+	optsA.ReaderName = name + "_a"
+	optsB := readerOpts(t, name)
+	optsB.ReaderName = name + "_b"
+
+	a := newReader(t, optsA)
+	b := newReader(t, optsB)
+
+	idsA := readIDs(t, a, n, 30*time.Second)
+	idsB := readIDs(t, b, n, 30*time.Second)
+
+	assertContiguous(t, idsA, 1)
+	assertContiguous(t, idsB, 1)
+}
+
+// R11: параллельные загрузчики не ломают порядок — блобы приезжают вразнобой,
+// но наружу sorter обязан выдавать строго по возрастанию.
+func TestReader_ManyLoadersKeepOrder(t *testing.T) {
+	name := testQueue(t)
+	wopts := writerOpts(t, name)
+	wopts.MaxBlobSize = 10
+	w := newWriter(t, wopts)
+	const n = 500
+	pushN(t, w, n)
+
+	opts := readerOpts(t, name)
+	opts.LoaderCount = 8
+	r := newReader(t, opts)
+
+	ids := readIDs(t, r, n, 60*time.Second)
+	assertContiguous(t, ids, 1)
+	assertAscending(t, ids)
+}
+
+// R12: при нескольких выдающих воркерах порядок между ними не гарантируется —
+// но ни одно сообщение не должно потеряться или прийти дважды.
+func TestReader_ManyWaitersNoLossNoDuplicates(t *testing.T) {
+	name := testQueue(t)
+	wopts := writerOpts(t, name)
+	wopts.MaxBlobSize = 10
+	w := newWriter(t, wopts)
+	const n = 500
+	pushN(t, w, n)
+
+	opts := readerOpts(t, name)
+	opts.WaiterCount = 8
+	r := newReader(t, opts)
+
+	var (
+		mu  sync.Mutex
+		ids []uint64
+	)
+	// отмена по контексту видна всем сборщикам сразу, в отличие от таймера,
+	// который достался бы только одному
+	collectCtx, collectCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer collectCancel()
+
 	wg := sync.WaitGroup{}
-	for i := 0; i < loaders*2; i++ {
+	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for {
 				select {
-				case <-ctxt.Done():
-					wg.Done()
+				case m := <-r.C():
+					mu.Lock()
+					ids = append(ids, m.Id())
+					enough := len(ids) >= n
+					mu.Unlock()
+					m.Done()
+					if enough {
+						collectCancel()
+						return
+					}
+				case <-collectCtx.Done():
 					return
-				case m := <-r.blobListChan:
-					lastFid = m.Fid
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	exp := 2 * loaders * timeout
-	assert.True(t, int(lastFid) >= exp)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids) < n {
+		t.Fatalf("прочитано %d из %d", len(ids), n)
+	}
+	assertContiguous(t, ids[:n], 1)
 }
 
-func TestReaderService_sortChain(t *testing.T) {
-	ctx := context.Background()
-	loaders := 2
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		DB: domain.DataBaseOptions{
-			DB: testDataBase,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		BufferSize:  1000000,
-		WaiterCount: 0,
+// R16 — КРАСНЫЙ: на нечитаемом блобе загрузчики срываются в плотный цикл.
+//
+// Ошибку расшифровки loadDB обрабатывает голым `continue` внутреннего цикла:
+// ни паузы, ни проверки ctx. Тот же fid запрашивается снова и снова на полной
+// скорости, и так до конца жизни процесса — отмена контекста это не
+// останавливает. Один такой ридер загружает базу на весь оставшийся прогон.
+func TestReader_WrongEncryptionKeyDoesNotCrash(t *testing.T) {
+	name := testQueue(t)
+	wopts := writerOpts(t, name)
+	wopts.DB.Compression = domain.CompressionOptions{
+		Encryption:    domain.BLOB_ENCRYPTION_AES,
+		EncryptionKey: []byte("11111111111111111111111111111111"),
 	}
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(t, err)
-	assert.NotNil(t, r)
+	w := newWriter(t, wopts)
+	pushN(t, w, 10)
 
-	for i := 0; i < loaders; i++ {
-		go func(i int) {
-			for {
-				_ = r.loadDB(i)
-			}
-		}(i)
+	ropts := readerOpts(t, name)
+	ropts.DB.Compression = domain.CompressionOptions{
+		Encryption:    domain.BLOB_ENCRYPTION_AES,
+		EncryptionKey: []byte("22222222222222222222222222222222"),
 	}
+	r := newReader(t, ropts)
 
-	go r.sorter(ctx)
+	// блоб не разбирается, наружу выйти нечему
+	expectNothing(t, r, time.Second)
 
-	stuckTimer := time.NewTimer(2 * time.Second)
-	var fid uint64 = 0
-	go func() {
-		for {
-			select {
-			case <-stuckTimer.C:
-			case m := <-r.bufferChan:
-				stuckTimer.Reset(2 * time.Second)
-				if fid == 0 {
-					fid = m.Fid
-					continue
-				}
+	before := atomic.LoadInt64(&r.deltaTimeCount)
+	time.Sleep(time.Second)
+	queries := atomic.LoadInt64(&r.deltaTimeCount) - before
 
-				if m.Fid < fid || m.Fid > fid+1 {
-					panic("invalid fid")
-				}
-				fid = m.Fid
-			}
+	// с паузой в 100мс двум загрузчикам хватило бы порядка двух десятков
+	// запросов в секунду
+	if queries > 200 {
+		t.Fatalf("за секунду ридер сходил в базу %d раз — загрузчики повторяют попытку без паузы", queries)
+	}
+}
+
+// R14: если начало очереди удалили, ридер обязан перескочить на первый живой
+// блоб, а не ждать вырезанный fid вечно.
+func TestReader_SkipsDeletedHead(t *testing.T) {
+	name := testQueue(t)
+	wopts := writerOpts(t, name)
+	wopts.MaxBlobSize = 10
+	w := newWriter(t, wopts)
+	pushN(t, w, 200)
+
+	blobs := blobsOf(t, name)
+	if len(blobs) < 5 {
+		t.Fatalf("ожидали хотя бы 5 блобов, получили %d", len(blobs))
+	}
+	cutTo := blobs[2].FID
+	if err := testDataBase.Table("axq_"+name).Where("fid <= ?", cutTo).Delete(&domain.Blob{}).Error; err != nil {
+		t.Fatalf("удаление головы: %v", err)
+	}
+	firstAlive := blobs[3]
+
+	r := newReader(t, readerOpts(t, name))
+	select {
+	case m := <-r.C():
+		defer m.Done()
+		if m.Id() != firstAlive.FromId {
+			t.Fatalf("после вырезанной головы пришёл id=%d, ожидали %d", m.Id(), firstAlive.FromId)
 		}
-	}()
-	<-time.NewTimer(15 * time.Second).C
+	case <-time.After(30 * time.Second):
+		t.Fatal("ридер завис на вырезанном начале очереди")
+	}
 }
 
-// Benchmarks
+// R13: дыра в середине таблицы. Ридер обязан отдать всё до неё и не свалиться;
+// дальше он останавливается намеренно — пропустить дыру значило бы молча
+// потерять сообщения, о которых мы ничего не знаем.
+func TestReader_StopsAtHoleInMiddle(t *testing.T) {
+	name := testQueue(t)
+	wopts := writerOpts(t, name)
+	wopts.MaxBlobSize = 10
+	w := newWriter(t, wopts)
+	pushN(t, w, 200)
 
-func BenchmarkReaderService_loaderDB_single(b *testing.B) {
-	ctx := context.Background()
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		DB: domain.DataBaseOptions{
-			DB: testDataBase,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		BufferSize: 1000000,
+	blobs := blobsOf(t, name)
+	hole := blobs[5]
+	if err := testDataBase.Table("axq_"+name).Where("fid = ?", hole.FID).Delete(&domain.Blob{}).Error; err != nil {
+		t.Fatalf("удаление блоба: %v", err)
 	}
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(b, err)
-	r.blobListChan = make(chan *protobuf.BlobMessageList, 100000)
 
-	count := uint64(0)
-	timeout := 10
-	ctxt, _ := context.WithTimeout(ctx, time.Second*time.Duration(timeout))
-	go func() {
-		prev := uint64(0)
-		for {
-			select {
-			case <-ctxt.Done():
-				return
-			case <-time.After(time.Second * 1):
-				log.Info().Int64("op-per-sec", int64(count-prev)).Msg("tick")
-				prev = count
-			}
-		}
-	}()
+	r := newReader(t, readerOpts(t, name))
+	before := int(hole.FromId - 1)
+	ids := readIDs(t, r, before, 30*time.Second)
+	assertContiguous(t, ids, 1)
 
-	go func() {
-		for {
-			if err := r.loadDB(0); err != nil {
-				panic(err)
-			}
-			atomic.AddUint64(&count, 1)
-		}
-	}()
-
-	<-ctxt.Done()
+	// за дырой поток останавливается
+	expectNothing(t, r, 2*time.Second)
 }
 
-func TestReaderService_multithreading(t *testing.T) {
-	utils.InitLogger("info")
-	ctx := context.Background()
-	loaders := 10
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		DB: domain.DataBaseOptions{
-			DB: testDataBase,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		BufferSize:  1000000,
-		BatchSize:   50,
-		LoaderCount: loaders,
-		WaiterCount: loaders * 2,
+// R17 — КРАСНЫЙ: отмена контекста не останавливает загрузчики.
+//
+// loadDB, не найдя блоб, спит и повторяет попытку в цикле, который вообще не
+// смотрит на ctx. После отмены getData начинает мгновенно возвращать
+// context.Canceled, цикл срывается в ветку `time.Sleep(250ms); continue` —
+// и горутина остаётся крутиться навсегда.
+func TestReader_CancelStopsGoroutines(t *testing.T) {
+	name := testQueue(t)
+	newWriter(t, writerOpts(t, name))
+
+	runtime.GC()
+	time.Sleep(200 * time.Millisecond)
+	before := runtime.NumGoroutine()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	opts := readerOpts(t, name)
+	opts.CTX = ctx
+	opts.LoaderCount = 4
+	newReader(t, opts)
+
+	time.Sleep(time.Second) // дать загрузчикам встать на ожидание хвоста
+	cancel()
+	time.Sleep(2 * time.Second)
+	runtime.GC()
+
+	after := runtime.NumGoroutine()
+	if after > before+2 {
+		t.Fatalf("после отмены осталось %d горутин против %d до старта ридера", after, before)
 	}
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(t, err)
-
-	count := uint64(0)
-	timeout := 10
-	ctxt, _ := context.WithTimeout(context.Background(), time.Second*time.Duration(timeout))
-	go func() {
-		prev := uint64(0)
-		for {
-			select {
-			case <-ctxt.Done():
-				return
-			case <-time.After(time.Second * 1):
-				log.Info().Int64("op-per-sec", int64(count-prev)).Int("buffer", len(r.bufferChan)).Int("blob list", len(r.blobListChan)).Int("out chan", len(r.outChan)).Msg("tick")
-				prev = count
-			}
-		}
-	}()
-
-	for i := 0; i < loaders*2; i++ {
-		go func() {
-			for {
-				m := r.Pop()
-				m.Done()
-				atomic.AddUint64(&count, 1)
-			}
-		}()
-	}
-
-	<-ctxt.Done()
-}
-
-func BenchmarkReaderService_sortChain(b *testing.B) {
-
-	ctx := context.Background()
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		DB: domain.DataBaseOptions{
-			DB: testDataBase,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		BufferSize: 100000,
-	}
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(b, err)
-	r.blobListChan = make(chan *protobuf.BlobMessageList, 1000)
-
-	var fids []uint64
-	for i := 1; i < 20; i++ {
-		fids = append(fids, uint64(i))
-	}
-	rand.Shuffle(len(fids), func(i, j int) {
-		fids[i], fids[j] = fids[j], fids[i]
-	})
-
-	for _, fid := range fids {
-		r.blobListChan <- &protobuf.BlobMessageList{
-			Fid: fid,
-		}
-	}
-
-	timelimit := 1
-	timeout := time.NewTimer(time.Duration(timelimit) * time.Second)
-	go r.sorter(ctx)
-	<-timeout.C
-
-}
-
-func TestReaderService_getData(t *testing.T) {
-	ctx := context.Background()
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			Name:   "test",
-			Logger: log.Logger,
-			CTX:    ctx,
-		},
-		DB: domain.DataBaseOptions{
-			DB: testDataBase,
-			Compression: domain.CompressionOptions{
-				Compression:   domain.BLOB_COMPRESSION_GZIP,
-				Encryption:    domain.BLOB_ENCRYPTION_AES,
-				EncryptionKey: []byte("12345678901234567890123456789012"),
-			},
-		},
-		BufferSize: 100000,
-		BatchSize:  10,
-	}
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(t, err)
-
-	loaders := 1
-	ctxt, _ := context.WithTimeout(ctx, time.Second*7)
-	for i := 0; i < loaders; i++ {
-		go func() {
-			for {
-				var batch []domain.Blob
-				fid := atomic.AddUint64(&r.dbFid, r.batchSize)
-				if err = r.getData(fid, &batch); err != nil {
-					if err.Error() == "record not found" {
-						return
-					}
-				}
-				assert.Nil(t, err)
-			}
-		}()
-	}
-	<-ctxt.Done()
-	log.Logger.Info().Int64("delta-time", r.deltaTime).Int64("delta-count", r.deltaTimeCount).Int64("ratio-ms", r.deltaTime/r.deltaTimeCount).Uint64("last fid", r.dbFid).Msg("test finished")
-}
-
-func TestReaderService_C(t *testing.T) {
-	ctx := context.Background()
-	l := utils.InitLogger("info")
-	//l := zerolog.Nop()
-	gLogger := utils.NewGLogger(l, true).LogMode(logger.Warn)
-	connectionString := fmt.Sprintf("root:@tcp(localhost:3306)/axq?charset=utf8&parseTime=True&loc=Local")
-	db, err := gorm.Open(mysql.Open(connectionString), &gorm.Config{Logger: gLogger})
-	if err != nil {
-		panic(err)
-	}
-	assert.Nil(t, err)
-
-	w, err := NewWriterService(domain.WriterOptions{
-		BaseOptions: domain.BaseOptions{
-			CTX:    ctx,
-			Logger: l,
-			Name:   "global_test",
-		},
-		DB: domain.DataBaseOptions{
-			DB: db,
-			Compression: domain.CompressionOptions{
-				Compression: domain.BLOB_COMPRESSION_GZIP,
-			},
-		},
-		PartitionsCount: 4,
-		MaxBlobSize:     10000,
-	})
-	go func() {
-		for {
-			time.Sleep(time.Millisecond * 1000)
-			err = w.Push([]byte("test"))
-			assert.Nil(t, err)
-		}
-	}()
-
-	readerOpts := domain.ReaderOptions{
-		BaseOptions: domain.BaseOptions{
-			CTX:    ctx,
-			Logger: l,
-			Name:   "global_test",
-		},
-		DB: domain.DataBaseOptions{
-			DB: db,
-			Compression: domain.CompressionOptions{
-				Compression: domain.BLOB_COMPRESSION_GZIP,
-			},
-		},
-		ReaderName:  "global_test_reader",
-		LoaderCount: 1,
-		WaiterCount: 1,
-		BufferSize:  100_000,
-		BatchSize:   10,
-	}
-	r, err := NewReaderService(readerOpts)
-	assert.Nil(t, err)
-
-	for {
-		select {
-		case msg := <-r.C():
-			fmt.Println(msg.Id(), msg)
-			msg.Done()
-		}
-	}
-
-	//r := &mockReader{
-	//	ctx:           ctx,
-	//	db:            db,
-	//	tableName:     "axq_global_test",
-	//	batchSize:     10,
-	//	nextBatchSize: 10,
-	//}
-	//
-	//for {
-	//	// 0 -> 10 (поиск от 1 до 10)
-	//	fid := atomic.AddUint64(&r.dbFid, r.batchSize)
-	//	var batch []domain.Blob
-	//	for {
-	//		err = r.testGetData(fid, &batch)
-	//		assert.Nil(t, err)
-	//		fmt.Println("from", fid-r.nextBatchSize, "to", fid, "found", len(batch), "next batch", r.nextBatchSize)
-	//		if len(batch) != int(r.batchSize) {
-	//			if len(batch) == 0 {
-	//				time.Sleep(500 * time.Millisecond)
-	//				continue
-	//			}
-	//			r.nextBatchSize -= uint64(len(batch))
-	//		}
-	//		fmt.Println("processing", len(batch))
-	//		if len(batch) != int(r.batchSize) {
-	//			if r.nextBatchSize == 0 {
-	//				r.nextBatchSize = r.batchSize
-	//				break
-	//			}
-	//			time.Sleep(100 * time.Millisecond)
-	//			continue
-	//		}
-	//		break
-	//	}
-	//	time.Sleep(500 * time.Millisecond)
-	//}
-}
-
-type mockReader struct {
-	ctx           context.Context
-	db            *gorm.DB
-	dbFid         uint64
-	tableName     string
-	batchSize     uint64
-	nextBatchSize uint64
-}
-
-func (r *mockReader) testGetData(fid uint64, res *[]domain.Blob) error {
-	localCtx, cancelFn := context.WithTimeout(r.ctx, time.Second*5)
-	defer cancelFn()
-	return r.db.WithContext(localCtx).Table(r.tableName).Where("fid > ? AND fid <= ?", fid-r.nextBatchSize, fid).Find(res).Error
 }

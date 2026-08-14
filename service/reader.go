@@ -72,7 +72,7 @@ func (r *ReaderService) Counter() (uint64, error) {
 }
 
 func (r *ReaderService) Performance() uint64 {
-	return r.performance
+	return atomic.LoadUint64(&r.performance)
 }
 
 func (r *ReaderService) Pop() domain.Message {
@@ -132,11 +132,7 @@ func NewReaderService(opts domain.ReaderOptions) (*ReaderService, error) {
 			return nil, errors.New(fmt.Sprintf("fail migrate table:(%s): %s", r.tableName, err))
 		}
 	}
-<<<<<<< HEAD
-	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd, opts.FromLatest)
-=======
-	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd, opts.StartFromEndEveryTime)
->>>>>>> refs/remotes/origin/main
+	r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, r.db, opts.StartFromEnd, opts.StartFromEndEveryTime, opts.FromLatest)
 	if err != nil {
 		return nil, err
 	}
@@ -218,47 +214,160 @@ func (r *ReaderService) loadDB(index int) error {
 	wlog := r.logger.With().Int("db-loader-worker", index).Logger()
 	fid := atomic.AddUint64(&r.dbFid, 1)
 	var blob domain.Blob
+	misses := 0
+	decodeFails := 0
 	for {
 		err := r.getData(fid, &blob)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				time.Sleep(100 * time.Millisecond)
+				// отсутствовать блоб может по двум причинам: это ещё не
+				// записанный хвост очереди — тогда надо ждать; либо строки
+				// удалили из таблицы снаружи — тогда ждать бессмысленно, блоб
+				// не появится никогда. Проверка ходит в базу, поэтому делается
+				// не на каждый промах.
+				misses++
+				if misses%cutCheckEveryMisses == 0 {
+					skipped, sErr := r.skipCutBlob(fid)
+					if sErr != nil {
+						wlog.Error().Err(sErr).Uint64("fid", fid).Msg("fail to check cut blob")
+					} else if skipped {
+						wlog.Warn().Uint64("fid", fid).Msg("blob was cut from table, skipping")
+						return nil
+					}
+				}
+				if !r.waitRetry(tailWaitInterval) {
+					return nil
+				}
 				continue
 			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				continue
+			wlog.Error().Err(err).Uint64("fid", fid).Msg("fail to read blob")
+			if !r.waitRetry(dbErrorInterval) {
+				return nil
 			}
-			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		wlog.Debug().Uint64("fid", fid).Uint64("from-id", blob.FromId).Uint64("to-id", blob.ToId).Msg("db blob")
-		data := blob.Message
-		switch blob.Encryption {
-		case domain.BLOB_ENCRYPTION_AES:
-			data, err = r.dbAes.Decrypt(data)
-			if err != nil {
-				continue
-			}
-		}
-		switch blob.Compression {
-		case domain.BLOB_COMPRESSION_GZIP:
-			data, err = utils.GUnzipData(data)
-			if err != nil {
-				continue
-			}
-		}
-		var list protobuf.BlobMessageList
-		err = proto.Unmarshal(data, &list)
+
+		list, err := r.decodeBlob(&blob)
 		if err != nil {
-			wlog.Error().Str("enсryption", blob.Encryption.String()).Str("comp", blob.Compression.String()).Err(err).Uint64("fid", blob.FID).Msg("unmarshal blob error")
+			// Блоб на месте, но не разбирается: чужой ключ, битые данные.
+			// Само по себе это не починится, поэтому пауза растёт — раньше
+			// здесь был голый continue, и загрузчик перечитывал один и тот же
+			// блоб на полной скорости. Пропустить его тоже нельзя: сообщения
+			// из него ещё никто не получил, и sorter встанет на дыре.
+			decodeFails++
+			wlog.Error().Err(err).
+				Uint64("fid", blob.FID).
+				Str("encryption", blob.Encryption.String()).
+				Str("compression", blob.Compression.String()).
+				Int("attempt", decodeFails).
+				Msg("fail to decode blob, retrying")
+			if !r.waitRetry(decodeBackoff(decodeFails)) {
+				return nil
+			}
 			continue
 		}
+
 		list.Fid = blob.FID
-		r.blobListChan <- &list
+		select {
+		case <-r.ctx.Done():
+			return nil
+		case r.blobListChan <- list:
+		}
 		wlog.Debug().Uint64("blob fid", blob.FID).Int("blob list chan len", len(r.blobListChan)).Msg("sent to blob list chan")
 
 		return nil
 	}
+}
+
+// decodeBlob разворачивает блоб в список сообщений: расшифровка, распаковка,
+// разбор protobuf.
+func (r *ReaderService) decodeBlob(blob *domain.Blob) (*protobuf.BlobMessageList, error) {
+	data := blob.Message
+	var err error
+	switch blob.Encryption {
+	case domain.BLOB_ENCRYPTION_AES:
+		if r.dbAes == nil {
+			return nil, errors.New("blob is encrypted but reader has no encryption key")
+		}
+		if data, err = r.dbAes.Decrypt(data); err != nil {
+			return nil, fmt.Errorf("decrypt: %w", err)
+		}
+	}
+	switch blob.Compression {
+	case domain.BLOB_COMPRESSION_GZIP:
+		if data, err = utils.GUnzipData(data); err != nil {
+			return nil, fmt.Errorf("gunzip: %w", err)
+		}
+	}
+	var list protobuf.BlobMessageList
+	if err = proto.Unmarshal(data, &list); err != nil {
+		return nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	return &list, nil
+}
+
+// waitRetry выдерживает паузу перед следующей попыткой и сообщает, стоит ли
+// вообще её делать: по отменённому контексту загрузчик обязан выйти, а не
+// продолжать цикл.
+func (r *ReaderService) waitRetry(d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-r.ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// decodeBackoff растит паузу от tailWaitInterval до maxDecodeBackoff. Блоб,
+// который не разобрался, не разберётся и от частых повторов — но повторять
+// всё же надо: ключ могут поправить и перезапустить сервис.
+func decodeBackoff(attempt int) time.Duration {
+	d := time.Duration(attempt) * tailWaitInterval
+	if d > maxDecodeBackoff {
+		return maxDecodeBackoff
+	}
+	return d
+}
+
+const (
+	// пауза, пока ждём ещё не записанный хвост очереди
+	tailWaitInterval = 100 * time.Millisecond
+	// пауза после ошибки базы
+	dbErrorInterval = 250 * time.Millisecond
+	// потолок паузы для блоба, который не разбирается
+	maxDecodeBackoff = 5 * time.Second
+	// cutCheckEveryMisses — раз во столько промахов подряд loadDB проверяет, не
+	// удалён ли блоб. При tailWaitInterval это примерно раз в 5 секунд: хвост
+	// очереди промахивается постоянно, и ходить в базу на каждый промах дорого.
+	cutCheckEveryMisses = 50
+)
+
+// skipCutBlob сообщает, удалён ли блоб с этим fid, то есть лежит ли он целиком
+// ниже начала таблицы. Если да — двигает позицию загрузчиков и счётчик
+// сообщений на первый существующий блоб. Сам сервис строк не удаляет, но это
+// может сделать оператор, и без такой проверки загрузчик ждал бы вечно.
+func (r *ReaderService) skipCutBlob(fid uint64) (bool, error) {
+	var first domain.Blob
+	if err := r.db.Table(r.tableName).Order("fid asc").First(&first).Error; err != nil {
+		return false, err
+	}
+	if first.FID <= fid {
+		return false, nil
+	}
+	// сообщения вырезанных блобов не придут никогда, поэтому позицию надо
+	// перенести вручную: иначе sorter будет вечно ждать пропущенные id и
+	// очередь встанет молча
+	r.lastId.Forward(first.FromId - 1)
+	for {
+		cur := atomic.LoadUint64(&r.dbFid)
+		if cur >= first.FID-1 || atomic.CompareAndSwapUint64(&r.dbFid, cur, first.FID-1) {
+			break
+		}
+	}
+	return true, nil
 }
 
 func (r *ReaderService) getData(fid uint64, res *domain.Blob) error {
@@ -304,6 +413,11 @@ func (r *ReaderService) sorter(ctx context.Context) {
 		case list := <-r.blobListChan:
 			wlog.Debug().Uint64("blob fid", list.Fid).Msg("read from blob list chan")
 			for _, msg := range list.Messages {
+				if msg.Id <= r.lastId.Current() {
+					// этот id уже отдан наружу: MinimalId к нему не вернётся, и
+					// в waitMap он осел бы до конца жизни процесса
+					continue
+				}
 				mu.Lock()
 				msg.Fid = list.Fid
 				waitMap[msg.Id] = msg
@@ -344,7 +458,7 @@ func (r *ReaderService) outer(index int) {
 				FID: m.Fid,
 				Id:  m.Id,
 			})
-			wlog.Info().Any("counters", r.counters.lastId).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Uint64("message fid", m.Fid).Msg("set last-id")
+			wlog.Info().Any("counters", r.counters.Last()).Uint64("minimal last id", r.lastId.Current()).Uint64("message id", m.Id).Uint64("message fid", m.Fid).Msg("set last-id")
 		}
 	}
 }
@@ -356,7 +470,7 @@ func (r *ReaderService) countPerformance() {
 		case <-r.ctx.Done():
 			return
 		case <-time.After(time.Second):
-			r.performance = r.lastId.Current() - prevLastId
+			atomic.StoreUint64(&r.performance, r.lastId.Current()-prevLastId)
 			prevLastId = r.lastId.Current()
 		}
 	}

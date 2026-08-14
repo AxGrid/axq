@@ -37,7 +37,7 @@ func NewWriterTransformer[F any](opts domain.WriterTransformerOptions[F]) (*Writ
 }
 
 func (w *WriterTransformer[F]) Push(message F) error {
-	if w.writer.stopped {
+	if w.writer.stopped.Load() {
 		return errors.New("writer stopped")
 	}
 	tr, err := w.transformer.Transform(message)
@@ -53,7 +53,7 @@ func (w *WriterTransformer[F]) Push(message F) error {
 }
 
 func (w *WriterTransformer[F]) PushMany(messages []F) error {
-	if w.writer.stopped {
+	if w.writer.stopped.Load() {
 		return errors.New("writer stopped")
 	}
 	var holders = make([]*dataHolder, len(messages))
