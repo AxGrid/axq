@@ -98,6 +98,16 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 // newArchiverService собирает сервис с заданной заливкой. Пустой uploader
 // означает боевой путь: авторизоваться в B2 и работать с бакетом.
 func newArchiverService(opts domain.ArchiverOptions, uploader blobUploader) (*ArchiverService, error) {
+	// Имя бакета считается до сборки сервиса и кладётся обратно в опции: дальше
+	// его берут и заливка, и логи, и никто не пересчитывает формулу заново.
+	if opts.B2.Stand == "" {
+		opts.B2.Stand = opts.Prefix
+	}
+	bucketName, err := utils.ResolveBucketName(opts.B2, opts.Name)
+	if err != nil {
+		return nil, err
+	}
+	opts.B2.Bucket = bucketName
 	ctx, cancelFn := context.WithCancel(opts.CTX)
 	r := &ArchiverService{
 		opts:        opts,
@@ -122,11 +132,6 @@ func newArchiverService(opts domain.ArchiverOptions, uploader blobUploader) (*Ar
 			return nil, err
 		}
 	}
-	bucketName := fmt.Sprintf("axq-%s-%s", opts.Prefix, utils.GetMD5Hash([]byte(opts.Name), opts.B2.Salt))
-	if len(bucketName) > 63 {
-		bucketName = bucketName[:63]
-	}
-	var err error
 	if uploader == nil {
 		r.b2Bucket, err = r.createBucket(bucketName)
 		if err != nil {
@@ -537,20 +542,27 @@ func (a *ArchiverService) createBucket(bucketName string) (*backblaze.Bucket, er
 	if err != nil {
 		return nil, errors.New("fail to create B2: " + err.Error())
 	}
-	a.logger.Info().Interface("creds", a.opts.B2.Credentials).Msg("authorize B2")
+	a.logger.Info().Str("bucket", bucketName).Msg("authorize B2")
 	if err = b2.AuthorizeAccount(); err != nil {
 		return nil, errors.New("fail to authorize B2: " + err.Error())
 	}
 
+	// Ошибку поиска нельзя трактовать как «бакета нет»: создание существующего
+	// бакета вернёт конфликт имени, и настоящая причина потеряется.
 	bucket, err := b2.Bucket(bucketName)
-	if err != nil || bucket == nil {
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("fail to lookup bucket %s: %s", bucketName, err))
+	}
+	if bucket == nil {
+		a.logger.Info().Str("bucket", bucketName).Msg("create bucket")
+		// Имена бакетов уникальны на весь B2, а не на аккаунт: читаемое имя
+		// может быть занято чужим проектом. Тогда его задают явно опцией.
 		bucket, err = b2.CreateBucket(bucketName, backblaze.AllPublic)
-		a.logger.Info().Msg("create bucket")
 		if err != nil {
-			return nil, err
+			return nil, errors.New(fmt.Sprintf("fail to create bucket %s: %s", bucketName, err))
 		}
 	} else {
-		a.logger.Info().Bool("has-bucket", bucket != nil).Msg("connected to bucket")
+		a.logger.Info().Str("bucket", bucketName).Msg("connected to bucket")
 	}
 
 	return bucket, nil

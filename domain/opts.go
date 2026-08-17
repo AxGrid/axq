@@ -122,7 +122,9 @@ type ArchiverOptions struct {
 	BaseOptions
 	DB         DataBaseOptions
 	B2         B2Options
-	Reader     ReaderOptions
+	Reader ReaderOptions
+	// Prefix — устаревшее имя стенда. Живёт ради старых сборок: если B2.Stand
+	// пуст, стенд берётся отсюда.
 	Prefix     string
 	ChunkSize  int
 	MaxSize    int
@@ -173,8 +175,16 @@ func (s CleanStats) ReaderLag() uint64 {
 
 type B2Options struct {
 	backblaze.Credentials
-	Salt        string
-	Endpoint    string
+	Salt     string
+	Endpoint string
+	// Bucket — полное имя бакета. Задаётся, когда данные уже лежат в бакете со
+	// старым именем: переименовать бакет в B2 нельзя.
+	Bucket string
+	// Namespace — первая часть собираемого имени, общая для всех очередей
+	// проекта. Пусто означает axq.
+	Namespace string
+	// Stand — окружение во второй части имени: prod, stage, dev.
+	Stand       string
 	Compression CompressionOptions
 }
 

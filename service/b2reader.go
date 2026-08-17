@@ -61,8 +61,15 @@ func NewB2ReaderService(opts domain.B2ReaderOptions) (*B2ReaderService, error) {
 		}
 	}
 
-	var err error
-	b2r.b2Bucket, err = b2r.createBucket("axqueue-" + utils.GetMD5Hash([]byte(opts.Name), opts.B2.Salt))
+	// Имя бакета считается той же функцией, что и в архивере: ридер качает файл
+	// по прямому URL и попадёт в данные, только если обе стороны собирают имя
+	// одинаково.
+	bucketName, err := utils.ResolveBucketName(opts.B2, opts.Name)
+	if err != nil {
+		return nil, err
+	}
+	b2r.opts.B2.Bucket = bucketName
+	b2r.b2Bucket, err = b2r.openBucket(bucketName)
 	if err != nil {
 		return nil, err
 	}
@@ -238,26 +245,27 @@ func (r *B2ReaderService) outer(index int) {
 	}
 }
 
-func (r *B2ReaderService) createBucket(bucketName string) (*backblaze.Bucket, error) {
+// openBucket находит бакет архива. Создавать его здесь нечего: пустой бакет от
+// опечатки в имени выглядел бы как исправно работающий ридер, который вечно не
+// находит ни одного файла.
+func (r *B2ReaderService) openBucket(bucketName string) (*backblaze.Bucket, error) {
 	b2, err := backblaze.NewB2(r.opts.B2.Credentials)
 	if err != nil {
 		return nil, errors.New("fail to create B2: " + err.Error())
 	}
-	r.logger.Info().Interface("creds", r.opts.B2.Credentials).Msg("authorize B2")
+	r.logger.Info().Str("bucket", bucketName).Msg("authorize B2")
 	if err = b2.AuthorizeAccount(); err != nil {
 		return nil, errors.New("fail to authorize B2: " + err.Error())
 	}
 
 	bucket, err := b2.Bucket(bucketName)
-	if err != nil || bucket == nil {
-		bucket, err = b2.CreateBucket(bucketName, backblaze.AllPublic)
-		r.logger.Info().Msg("create bucket")
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		r.logger.Info().Bool("has-bucket", bucket != nil).Msg("connected to bucket")
+	if err != nil {
+		return nil, fmt.Errorf("fail to lookup bucket %s: %w", bucketName, err)
 	}
+	if bucket == nil {
+		return nil, fmt.Errorf("b2 bucket %s not found", bucketName)
+	}
+	r.logger.Info().Str("bucket", bucketName).Msg("connected to bucket")
 
 	return bucket, nil
 }

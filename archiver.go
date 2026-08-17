@@ -192,8 +192,30 @@ func (b *ArchiverBuilder) WithB2Endpoint(endpoint string) *ArchiverBuilder {
 	return b
 }
 
+// WithPrefix — устаревший способ задать стенд. Оставлен ради старых сборок,
+// в новом коде WithB2Stand.
 func (b *ArchiverBuilder) WithPrefix(prefix string) *ArchiverBuilder {
 	b.opts.Prefix = prefix
+	return b
+}
+
+// WithB2Bucket задаёт имя бакета целиком. Нужно, когда архив уже лежит в бакете
+// со старым именем: переименовать бакет в B2 нельзя.
+func (b *ArchiverBuilder) WithB2Bucket(bucket string) *ArchiverBuilder {
+	b.opts.B2.Bucket = bucket
+	return b
+}
+
+// WithB2Namespace задаёт первую часть имени бакета, общую для всех очередей
+// проекта: stellar-bets → stellar-bets-prod-events.
+func (b *ArchiverBuilder) WithB2Namespace(namespace string) *ArchiverBuilder {
+	b.opts.B2.Namespace = namespace
+	return b
+}
+
+// WithB2Stand задаёт окружение во второй части имени бакета: prod, stage, dev.
+func (b *ArchiverBuilder) WithB2Stand(stand string) *ArchiverBuilder {
+	b.opts.B2.Stand = stand
 	return b
 }
 

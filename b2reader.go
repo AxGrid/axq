@@ -72,6 +72,31 @@ func (b *B2ReaderBuilder) WithB2Salt(salt string) *B2ReaderBuilder {
 	return b
 }
 
+// WithB2Bucket задаёт имя бакета целиком, минуя сборку из частей.
+func (b *B2ReaderBuilder) WithB2Bucket(bucket string) *B2ReaderBuilder {
+	b.opts.B2.Bucket = bucket
+	return b
+}
+
+// WithB2Namespace задаёт первую часть имени бакета. Значение обязано совпадать
+// с тем, что задано архиверу этой очереди.
+func (b *B2ReaderBuilder) WithB2Namespace(namespace string) *B2ReaderBuilder {
+	b.opts.B2.Namespace = namespace
+	return b
+}
+
+// WithB2Stand задаёт окружение во второй части имени бакета. Тоже обязано
+// совпадать с архивером.
+func (b *B2ReaderBuilder) WithB2Stand(stand string) *B2ReaderBuilder {
+	b.opts.B2.Stand = stand
+	return b
+}
+
+func (b *B2ReaderBuilder) WithB2Endpoint(endpoint string) *B2ReaderBuilder {
+	b.opts.B2.Endpoint = endpoint
+	return b
+}
+
 func (b *B2ReaderBuilder) WithoutCompression() *B2ReaderBuilder {
 	b.opts.B2.Compression.Compression = domain.BLOB_COMPRESSION_NONE
 	return b
