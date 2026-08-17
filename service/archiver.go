@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,8 +23,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// blobUploader кладёт упакованный архив в хранилище. Вынесен в интерфейс, чтобы
+// тесты гоняли конвейер целиком, не выходя в сеть.
+type blobUploader interface {
+	Upload(filename string, metadata map[string]string, data []byte) error
+}
+
+type b2Uploader struct {
+	bucket *backblaze.Bucket
+}
+
+func (u *b2Uploader) Upload(filename string, metadata map[string]string, data []byte) error {
+	_, err := u.bucket.UploadFile(filename, metadata, bytes.NewBuffer(data))
+	return err
+}
+
 type ArchiverService struct {
 	opts        domain.ArchiverOptions
+	uploader    blobUploader
 	db          *gorm.DB
 	logger      zerolog.Logger
 	tableName   string
@@ -42,9 +59,45 @@ type ArchiverService struct {
 	packRatio   float64
 	blobIdsChan chan domain.BlobIDs
 	b2Fid       uint64
+	// currentDbFid — fid блоба БД, из которого пришло последнее уложенное
+	// сообщение; принадлежит горутине loader
+	currentDbFid uint64
+	// archivedDbFid — последний fid блоба БД, целиком уехавший в B2. Пишется
+	// в sorter после коммита, читается снаружи, поэтому atomic.
+	archivedDbFid uint64
+
+	cleanMu         sync.Mutex
+	cleanStats      domain.CleanStats
+	cleanDeleted    int64
+	cleanLastDelFid uint64
+}
+
+const (
+	defaultCleanInterval = time.Minute
+	defaultCleanBatch    = 1000
+)
+
+// archiverCounterName — имя строки счётчика архивера. Её fid означает ровно то
+// же, что у любого другого потребителя очереди — позицию в таблице, — поэтому
+// из расчёта самого отставшего её исключать не нужно.
+func archiverCounterName(queue string) string {
+	return fmt.Sprintf("b2_archiver_%s", queue)
+}
+
+// ArchivedDbFID возвращает блоб таблицы, в котором лежит последнее уехавшее в
+// B2 сообщение. Сам этот блоб мог уехать не целиком — его хвост попадёт в
+// следующий архив, — поэтому удалять можно только то, что строго ниже.
+func (a *ArchiverService) ArchivedDbFID() uint64 {
+	return atomic.LoadUint64(&a.archivedDbFid)
 }
 
 func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
+	return newArchiverService(opts, nil)
+}
+
+// newArchiverService собирает сервис с заданной заливкой. Пустой uploader
+// означает боевой путь: авторизоваться в B2 и работать с бакетом.
+func newArchiverService(opts domain.ArchiverOptions, uploader blobUploader) (*ArchiverService, error) {
 	ctx, cancelFn := context.WithCancel(opts.CTX)
 	r := &ArchiverService{
 		opts:        opts,
@@ -74,10 +127,14 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		bucketName = bucketName[:63]
 	}
 	var err error
-	r.b2Bucket, err = r.createBucket(bucketName)
-	if err != nil {
-		return nil, err
+	if uploader == nil {
+		r.b2Bucket, err = r.createBucket(bucketName)
+		if err != nil {
+			return nil, err
+		}
+		uploader = &b2Uploader{bucket: r.b2Bucket}
 	}
+	r.uploader = uploader
 	r.tableName = fmt.Sprintf("axq_%s", opts.Name)
 	if !r.db.Migrator().HasTable(r.tableName) {
 		opts.Logger.Debug().Str("table", r.tableName).Msg("create table")
@@ -108,7 +165,7 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		}
 		r.b2Aes = aes
 	}
-	archiverName := fmt.Sprintf("b2_archiver_%s", opts.Name)
+	archiverName := archiverCounterName(opts.Name)
 	r.counters, err = NewCounterService(opts.Name, archiverName, opts.CTX, opts.Logger, r.db, false, false, false) // B2 Counters
 	if err != nil {
 		return nil, err
@@ -117,12 +174,9 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.b2Fid = lastId.FID
-	startFid, err := r.readerStartFID(lastId.Id)
-	if err != nil {
-		return nil, err
-	}
-	r.logger.Info().Uint64("last-id", lastId.Id).Uint64("start-fid", startFid).Msg("archiver reader start position")
+	r.b2Fid = lastId.B2Fid
+	atomic.StoreUint64(&r.archivedDbFid, lastId.FID)
+	r.logger.Info().Uint64("last-id", lastId.Id).Uint64("start-fid", lastId.FID).Uint64("b2-fid", lastId.B2Fid).Msg("archiver start position")
 	readerName := fmt.Sprintf("%s_reader", archiverName)
 	r.reader, err = NewReaderService(domain.ReaderOptions{
 		BaseOptions:  opts.BaseOptions,
@@ -134,7 +188,7 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 		WaiterCount:  opts.Reader.WaiterCount,
 		StartFromEnd: opts.Reader.StartFromEnd,
 		LastId: &domain.LastIdOptions{
-			FID:    startFid,
+			FID:    lastId.FID,
 			LastId: lastId.Id,
 		},
 	})
@@ -146,32 +200,158 @@ func NewArchiverService(opts domain.ArchiverOptions) (*ArchiverService, error) {
 	for i := 0; i < opts.OuterCount; i++ {
 		go r.outer(i)
 	}
+	if opts.CleanGapFID > 0 {
+		go r.cleaner()
+	}
 
 	return r, nil
 }
 
-// readerStartFID подбирает блоб таблицы, с которого архиверу продолжать чтение.
-// В счётчике архивера поле FID — это номер блоба в B2, а не в базе, поэтому
-// DB-позицию приходится искать по id последнего заархивированного сообщения.
-func (a *ArchiverService) readerStartFID(lastId uint64) (uint64, error) {
-	var blob domain.Blob
-	err := a.db.Table(a.tableName).Where("to_id >= ?", lastId).Order("fid asc").First(&blob).Error
-	if err == nil {
-		return blob.FID, nil
+// CleanStats отдаёт снимок последнего прохода чистки. Сама чистка молча стоит,
+// если какой-то потребитель встал, поэтому отставание надо мониторить снаружи.
+func (a *ArchiverService) CleanStats() domain.CleanStats {
+	a.cleanMu.Lock()
+	defer a.cleanMu.Unlock()
+	return a.cleanStats
+}
+
+func (a *ArchiverService) cleaner() {
+	interval := a.opts.CleanInterval
+	if interval <= 0 {
+		interval = defaultCleanInterval
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.clean(); err != nil {
+				a.logger.Error().Err(err).Msg("fail to clean archived blobs")
+			}
+		}
+	}
+}
+
+// clean удаляет из таблицы то, что уже прошли все потребители, оставляя позади
+// самого отставшего зазор в CleanGapFID блобов.
+func (a *ArchiverService) clean() error {
+	head, err := a.headFID()
+	if err != nil {
+		return err
+	}
+	slowName, slowFid, hasReaders, err := a.slowestConsumer()
+	if err != nil {
+		return err
+	}
+
+	stats := domain.CleanStats{
+		SlowestReader:    slowName,
+		SlowestReaderFID: slowFid,
+		HeadFID:          head,
+		ArchivedFID:      a.ArchivedDbFID(),
+		LastRun:          time.Now(),
+		NoReaders:        !hasReaders,
+	}
+	defer func() {
+		a.cleanMu.Lock()
+		stats.DeletedRows = a.cleanDeleted
+		stats.LastDeletedFID = a.cleanLastDelFid
+		a.cleanStats = stats
+		a.cleanMu.Unlock()
+	}()
+
+	// ни одного потребителя — удалять не за кем и опасно
+	if !hasReaders || slowFid <= a.opts.CleanGapFID {
+		return nil
+	}
+	deleteTo := slowFid - a.opts.CleanGapFID
+
+	a.cleanMu.Lock()
+	already := a.cleanLastDelFid
+	a.cleanMu.Unlock()
+	if deleteTo <= already {
+		return nil
+	}
+
+	deleted, err := a.deleteUpTo(deleteTo)
+	a.cleanMu.Lock()
+	a.cleanDeleted += deleted
+	if deleted > 0 {
+		a.cleanLastDelFid = deleteTo
+	}
+	a.cleanMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if deleted > 0 {
+		a.logger.Info().
+			Int64("rows", deleted).
+			Uint64("up-to-fid", deleteTo).
+			Str("slowest", slowName).
+			Uint64("slowest-fid", slowFid).
+			Uint64("head-fid", head).
+			Msg("cleaned archived blobs")
+	}
+	return nil
+}
+
+// slowestConsumer — потребитель очереди с наименьшей позицией. Строка архивера
+// участвует наравне с остальными: её fid означает то же самое, и именно это
+// не даёт чистке обогнать заливку в B2.
+func (a *ArchiverService) slowestConsumer() (string, uint64, bool, error) {
+	var row struct {
+		ReaderName string
+		Fid        uint64
+	}
+	res := a.db.Model(&domain.BlobCounter{}).
+		Select("reader_name", "fid").
+		Where("name = ?", a.opts.Name).
+		Order("fid asc").
+		Limit(1).
+		Scan(&row)
+	if res.Error != nil {
+		return "", 0, false, res.Error
+	}
+	return row.ReaderName, row.Fid, res.RowsAffected > 0, nil
+}
+
+func (a *ArchiverService) headFID() (uint64, error) {
+	var blob domain.Blob
+	err := a.db.Table(a.tableName).Select("fid").Order("fid desc").First(&blob).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
 		return 0, err
 	}
-	// заархивированное уже вырезано из таблицы — начинаем с самого старого
-	// сохранившегося блоба
-	err = a.db.Table(a.tableName).Order("fid asc").First(&blob).Error
-	if err == nil {
-		return blob.FID, nil
+	return blob.FID, nil
+}
+
+// deleteUpTo удаляет блобы батчами: одним DELETE на сотни тысяч строк мы бы
+// держали длинную транзакцию и лочили таблицу под живой записью.
+func (a *ArchiverService) deleteUpTo(fid uint64) (int64, error) {
+	batch := a.opts.CleanBatch
+	if batch <= 0 {
+		batch = defaultCleanBatch
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return 0, nil
+	var total int64
+	for {
+		select {
+		case <-a.ctx.Done():
+			return total, nil
+		default:
+		}
+		res := a.db.Table(a.tableName).Where("fid <= ?", fid).Limit(batch).Delete(&domain.Blob{})
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < int64(batch) {
+			return total, nil
+		}
 	}
-	return 0, err
 }
 
 func (a *ArchiverService) loader(index int) {
@@ -203,6 +383,9 @@ func (a *ArchiverService) loader(index int) {
 				a.rawSize = 0
 			}
 			a.currentBlob.ToId = msg.Id()
+			// запоминаем, из какого блоба БД приехало сообщение: по нему
+			// потом видно, докуда таблица заархивирована целиком
+			a.currentDbFid = msg.Fid()
 			blobMessage := &protobuf.BlobMessage{
 				Id:      msg.Id(),
 				Message: msg.Message(),
@@ -224,6 +407,7 @@ func (a *ArchiverService) loader(index int) {
 			}
 			a.currentBlob.Messages = packed
 			a.currentBlob.Count = uint64(len(a.messageList.Messages))
+			a.currentBlob.DbFid = a.currentDbFid
 			a.outChan <- a.currentBlob
 			wlog.Info().Int("size", len(packed)).Msgf("send blob %d", a.currentBlob.Fid)
 			a.currentBlob = nil
@@ -264,7 +448,7 @@ func (a *ArchiverService) outer(index int) {
 			}
 			//blobMD5 := utils.GetMD5Hash(bts, "")
 			for {
-				_, err = a.b2Bucket.UploadFile(filename, metadata, bytes.NewBuffer(bts))
+				err = a.uploader.Upload(filename, metadata, bts)
 				if err != nil {
 					wlog.Error().Err(err).Uint64("fid", m.Fid).Uint64("from-id", m.FromId).Uint64("to-id", m.ToId).Uint64("total", m.Count).Msg("fail upload blob")
 					select {
@@ -297,6 +481,7 @@ func (a *ArchiverService) outer(index int) {
 					FID:    m.Fid,
 					FromId: m.FromId,
 					ToId:   m.ToId,
+					DbFid:  m.DbFid,
 				}:
 				}
 				break
@@ -329,8 +514,18 @@ func (a *ArchiverService) sorter() {
 				delete(waitMap, next.FromId)
 				// диапазон блоба непрерывен, а сами блобы коммитятся по
 				// порядку, поэтому счётчик двигается одним шагом на весь блоб
-				a.counters.Commit(domain.MessageIDs{FID: next.FID, Id: next.ToId})
+				// В fid счётчика идёт позиция в таблице — тот же смысл, что у
+				// всех остальных потребителей очереди. Номер файла в архиве
+				// живёт отдельным полем: это разные пространства нумерации.
+				a.counters.Commit(domain.MessageIDs{
+					FID:   next.DbFid,
+					B2Fid: next.FID,
+					Id:    next.ToId,
+				})
 				nextId = next.ToId + 1
+				if next.DbFid > 0 {
+					atomic.StoreUint64(&a.archivedDbFid, next.DbFid)
+				}
 				a.logger.Info().Any("ids", next).Int("waiting", len(waitMap)).Msg("processed batch. set counters")
 			}
 		}

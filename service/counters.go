@@ -106,8 +106,9 @@ func (r *CounterService) Get() (domain.MessageIDs, error) {
 		return domain.MessageIDs{}, err
 	}
 	return domain.MessageIDs{
-		FID: counter.Fid,
-		Id:  counter.ID,
+		FID:   counter.Fid,
+		B2Fid: counter.B2Fid,
+		Id:    counter.ID,
 	}, nil
 }
 
@@ -204,8 +205,9 @@ func (r *CounterService) save() {
 
 func (r *CounterService) saveData(ids domain.MessageIDs) error {
 	return r.db.Model(&domain.BlobCounter{}).Where("reader_name = ? AND name = ?", r.readerName, r.name).Updates(map[string]interface{}{
-		"id":  ids.Id,
-		"fid": ids.FID,
+		"id":     ids.Id,
+		"fid":    ids.FID,
+		"b2_fid": ids.B2Fid,
 	}).Error
 }
 

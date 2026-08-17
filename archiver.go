@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/service"
@@ -67,8 +68,13 @@ func NewArchiver() *ArchiverBuilder {
 			},
 			OuterCount: 2,
 			MaxCount:   1_000,
-			MaxSize:    1_000_000,
-			ChunkSize:  1_000,
+			// чистка выключена по умолчанию: удаление данных должно быть
+			// осознанным решением, а не побочным эффектом обновления
+			CleanGapFID:   0,
+			CleanInterval: time.Minute,
+			CleanBatch:    1_000,
+			MaxSize:       1_000_000,
+			ChunkSize:     1_000,
 		},
 	}
 }
@@ -115,6 +121,25 @@ func (b *ArchiverBuilder) WithMaxSize(size int) *ArchiverBuilder {
 
 func (b *ArchiverBuilder) WithMaxCount(count int) *ArchiverBuilder {
 	b.opts.MaxCount = count
+	return b
+}
+
+// WithCleanGap включает удаление из таблицы уже пройденных блобов, оставляя
+// позади самого отставшего потребителя зазор в gap блобов. Ноль выключает
+// чистку. Потребитель, отставший больше чем на зазор, потеряет данные —
+// следить за этим надо по CleanStats.
+func (b *ArchiverBuilder) WithCleanGap(gap uint64) *ArchiverBuilder {
+	b.opts.CleanGapFID = gap
+	return b
+}
+
+func (b *ArchiverBuilder) WithCleanInterval(d time.Duration) *ArchiverBuilder {
+	b.opts.CleanInterval = d
+	return b
+}
+
+func (b *ArchiverBuilder) WithCleanBatch(n int) *ArchiverBuilder {
+	b.opts.CleanBatch = n
 	return b
 }
 

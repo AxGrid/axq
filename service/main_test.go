@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/axgrid/axq/domain"
 	"github.com/axgrid/axq/utils"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/rs/zerolog"
@@ -37,6 +38,11 @@ func TestMain(m *testing.M) {
 	var err error
 	testDataBase, err = gorm.Open(mysql.Open(connectionString), &gorm.Config{Logger: gLogger, DisableForeignKeyConstraintWhenMigrating: true})
 	if err != nil {
+		panic(err)
+	}
+	// В продакшене схему счётчиков подтягивает NewCounterService, но часть
+	// тестов пишет в таблицу напрямую — им нужна актуальная схема заранее.
+	if err = testDataBase.AutoMigrate(domain.BlobCounter{}); err != nil {
 		panic(err)
 	}
 	os.Exit(m.Run())

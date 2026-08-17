@@ -17,8 +17,13 @@ type Blob struct {
 type BlobCounter struct {
 	ReaderName string `gorm:"size:128;primaryKey"`
 	Name       string `gorm:"size:128;primaryKey"`
-	Fid        uint64
-	ID         uint64
+	// Fid — позиция в таблице очереди. Смысл одинаков у всех потребителей,
+	// включая архивер: это то, по чему считается самый отставший.
+	Fid uint64
+	// B2Fid — номер файла в архиве. Заполняет только архивер: нумерация B2
+	// живёт отдельно от табличной, а имя файла выводится именно из неё.
+	B2Fid uint64
+	ID    uint64
 }
 
 func (b *BlobCounter) TableName() string {

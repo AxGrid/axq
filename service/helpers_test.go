@@ -205,3 +205,14 @@ func pushConcurrent(t testing.TB, w *WriterService, n, workers int) {
 		t.Fatalf("Push: %v", bad)
 	}
 }
+
+// pushN2 пишет n сообщений, продолжая нумерацию с from — нужен там, где очередь
+// доливают после перезапуска потребителя.
+func pushN2(t testing.TB, w *WriterService, from, n int) {
+	t.Helper()
+	for i := from; i < from+n; i++ {
+		if err := w.Push([]byte(fmt.Sprintf("msg-%d", i))); err != nil {
+			t.Fatalf("Push #%d: %v", i, err)
+		}
+	}
+}

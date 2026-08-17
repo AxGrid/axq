@@ -21,109 +21,6 @@ func bareArchiver(name string) *ArchiverService {
 	}
 }
 
-// C6: позиция архивера хранится в id сообщений, а fid в его счётчике — это
-// номер блоба в B2, а не в базе. Стартовый DB-fid приходится искать по id.
-func TestArchiver_ReaderStartFID_FindsBlobByMessageID(t *testing.T) {
-	name := testQueue(t)
-	wopts := writerOpts(t, name)
-	wopts.MaxBlobSize = 10
-	w := newWriter(t, wopts)
-	pushN(t, w, 100)
-
-	blobs := blobsOf(t, name)
-	a := bareArchiver(name)
-
-	for _, target := range []domain.Blob{blobs[0], blobs[3], blobs[len(blobs)-1]} {
-		got, err := a.readerStartFID(target.ToId)
-		if err != nil {
-			t.Fatalf("readerStartFID(%d): %v", target.ToId, err)
-		}
-		if got != target.FID {
-			t.Fatalf("для lastId=%d получили fid=%d, ожидали %d", target.ToId, got, target.FID)
-		}
-	}
-}
-
-// C6b: архивер не должен начинать с нуля — иначе он перечитывает всю таблицу.
-func TestArchiver_ReaderStartFID_NotZeroOnRestart(t *testing.T) {
-	name := testQueue(t)
-	wopts := writerOpts(t, name)
-	wopts.MaxBlobSize = 10
-	w := newWriter(t, wopts)
-	pushN(t, w, 100)
-
-	a := bareArchiver(name)
-	got, err := a.readerStartFID(55)
-	if err != nil {
-		t.Fatalf("readerStartFID: %v", err)
-	}
-	if got <= 1 {
-		t.Fatalf("для lastId=55 стартовый fid=%d — таблица будет перечитана с начала", got)
-	}
-}
-
-// C6c: позиция архивера указывает внутрь уже удалённого блоба — продолжать
-// надо с первого сохранившегося, а не ждать вырезанный fid.
-func TestArchiver_ReaderStartFID_HeadDeleted(t *testing.T) {
-	name := testQueue(t)
-	w := newWriter(t, writerOpts(t, name))
-	pushN(t, w, 100)
-
-	blobs := blobsOf(t, name)
-	deadTo := blobs[4]
-	firstAlive := blobs[5]
-	if err := testDataBase.Table("axq_"+name).Where("fid <= ?", deadTo.FID).Delete(&domain.Blob{}).Error; err != nil {
-		t.Fatalf("удаление головы: %v", err)
-	}
-
-	a := bareArchiver(name)
-	got, err := a.readerStartFID(blobs[1].ToId) // id из уже удалённого блоба
-	if err != nil {
-		t.Fatalf("readerStartFID: %v", err)
-	}
-	if got != firstAlive.FID {
-		t.Fatalf("получили fid=%d, ожидали первый живой %d", got, firstAlive.FID)
-	}
-}
-
-// C6c2: не осталось ни одного блоба, который дотягивал бы до позиции архивера.
-// Тогда работает запасная ветка — самый старый сохранившийся блоб.
-func TestArchiver_ReaderStartFID_NothingReachesPosition(t *testing.T) {
-	name := testQueue(t)
-	w := newWriter(t, writerOpts(t, name))
-	pushN(t, w, 100)
-
-	blobs := blobsOf(t, name)
-	// сносим хвост: теперь ни один блоб не покрывает id=100
-	if err := testDataBase.Table("axq_"+name).Where("fid >= ?", blobs[50].FID).Delete(&domain.Blob{}).Error; err != nil {
-		t.Fatalf("удаление хвоста: %v", err)
-	}
-
-	a := bareArchiver(name)
-	got, err := a.readerStartFID(100)
-	if err != nil {
-		t.Fatalf("readerStartFID: %v", err)
-	}
-	if got != blobs[0].FID {
-		t.Fatalf("получили fid=%d, ожидали самый старый сохранившийся %d", got, blobs[0].FID)
-	}
-}
-
-// C6d: пустая таблица — нулевая позиция, ридер просто подождёт райтера.
-func TestArchiver_ReaderStartFID_EmptyTable(t *testing.T) {
-	name := testQueue(t)
-	newWriter(t, writerOpts(t, name))
-
-	a := bareArchiver(name)
-	got, err := a.readerStartFID(0)
-	if err != nil {
-		t.Fatalf("readerStartFID на пустой таблице: %v", err)
-	}
-	if got != 0 {
-		t.Fatalf("на пустой таблице получили fid=%d, ожидали 0", got)
-	}
-}
-
 func fillArchiverBlob(a *ArchiverService, count, msgSize int) {
 	a.messageList = &protobuf.BlobMessageList{Fid: 1}
 	a.rawSize = 0
@@ -229,5 +126,188 @@ func TestArchiver_ReadyToPack_MaxCountIsHardLimit(t *testing.T) {
 
 	if !a.readyToPack() {
 		t.Fatal("достигнут MaxCount, но упаковка не запрошена")
+	}
+}
+
+// setCounter кладёт строку потребителя очереди с заданной позицией в таблице.
+func setCounter(t *testing.T, queue, reader string, fid, id uint64) {
+	t.Helper()
+	err := testDataBase.Save(&domain.BlobCounter{
+		ReaderName: reader,
+		Name:       queue,
+		Fid:        fid,
+		ID:         id,
+	}).Error
+	if err != nil {
+		t.Fatalf("запись счётчика %s: %v", reader, err)
+	}
+}
+
+func cleanArchiver(t *testing.T, name string, gap uint64) *ArchiverService {
+	t.Helper()
+	a := bareArchiver(name)
+	a.ctx = testCtx(t)
+	a.opts.Name = name
+	a.opts.CleanGapFID = gap
+	a.opts.CleanBatch = 100
+	return a
+}
+
+func remainingFIDs(t *testing.T, name string) []uint64 {
+	t.Helper()
+	var fids []uint64
+	if err := testDataBase.Table("axq_"+name).Order("fid asc").Pluck("fid", &fids).Error; err != nil {
+		t.Fatalf("чтение fid: %v", err)
+	}
+	return fids
+}
+
+// Граница чистки — позиция самого отставшего потребителя минус зазор.
+func TestArchiver_Clean_KeepsGapBehindSlowestReader(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 200) // последовательная запись даёт блоб на сообщение
+
+	setCounter(t, name, name+"_fast", 180, 180)
+	setCounter(t, name, name+"_slow", 120, 120)
+	setCounter(t, name, archiverCounterName(name), 150, 150)
+
+	a := cleanArchiver(t, name, 20)
+	if err := a.clean(); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	// самый отставший — 120, зазор 20, значит удалено всё до 100 включительно
+	fids := remainingFIDs(t, name)
+	if len(fids) == 0 {
+		t.Fatal("удалено всё")
+	}
+	if fids[0] != 101 {
+		t.Fatalf("первый оставшийся блоб fid=%d, ожидали 101", fids[0])
+	}
+}
+
+// Архивер участвует в расчёте наравне с ридерами: если он отстал сильнее всех,
+// граница считается по нему — это и не даёт чистке обогнать заливку в B2.
+func TestArchiver_Clean_ArchiverIsAConsumerToo(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 200)
+
+	setCounter(t, name, name+"_reader", 190, 190)
+	setCounter(t, name, archiverCounterName(name), 60, 60) // архивер отстал сильнее всех
+
+	a := cleanArchiver(t, name, 20)
+	if err := a.clean(); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	fids := remainingFIDs(t, name)
+	if fids[0] != 41 {
+		t.Fatalf("первый оставшийся блоб fid=%d, ожидали 41 (60 − 20)", fids[0])
+	}
+}
+
+// Зазор ещё не выбран — не удаляем ничего.
+func TestArchiver_Clean_GapNotReached(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 50)
+
+	setCounter(t, name, name+"_reader", 30, 30)
+
+	a := cleanArchiver(t, name, 100)
+	if err := a.clean(); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	if got := len(remainingFIDs(t, name)); got != 50 {
+		t.Fatalf("осталось %d блобов, ожидали все 50", got)
+	}
+}
+
+// Очередь никто не читает — удалять не за кем, это защита от чистки вслепую.
+func TestArchiver_Clean_NoConsumersNoDeletion(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 50)
+
+	a := cleanArchiver(t, name, 10)
+	if err := a.clean(); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	if got := len(remainingFIDs(t, name)); got != 50 {
+		t.Fatalf("осталось %d блобов, ожидали все 50", got)
+	}
+	if !a.CleanStats().NoReaders {
+		t.Fatal("в статистике не отмечено отсутствие потребителей")
+	}
+}
+
+// Удаление идёт батчами и доводится до конца, даже когда строк много больше
+// одного батча.
+func TestArchiver_Clean_DeletesInBatches(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 500)
+
+	setCounter(t, name, name+"_reader", 450, 450)
+
+	a := cleanArchiver(t, name, 50) // граница 400, батч 100 → четыре прохода
+	if err := a.clean(); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	fids := remainingFIDs(t, name)
+	if fids[0] != 401 {
+		t.Fatalf("первый оставшийся блоб fid=%d, ожидали 401", fids[0])
+	}
+	if st := a.CleanStats(); st.DeletedRows != 400 {
+		t.Fatalf("в статистике удалено %d строк, ожидали 400", st.DeletedRows)
+	}
+}
+
+// Повторный проход без движения потребителей не должен ничего делать.
+func TestArchiver_Clean_IdempotentWithoutProgress(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 200)
+	setCounter(t, name, name+"_reader", 150, 150)
+
+	a := cleanArchiver(t, name, 50)
+	if err := a.clean(); err != nil {
+		t.Fatalf("первый clean: %v", err)
+	}
+	first := a.CleanStats().DeletedRows
+
+	if err := a.clean(); err != nil {
+		t.Fatalf("второй clean: %v", err)
+	}
+	if got := a.CleanStats().DeletedRows; got != first {
+		t.Fatalf("второй проход удалил ещё %d строк", got-first)
+	}
+}
+
+// Метрики должны давать отставание самого медленного от головы очереди —
+// по ним и вешается алерт, потому что сама чистка при затыке молчит.
+func TestArchiver_Clean_StatsReportLag(t *testing.T) {
+	name := testQueue(t)
+	w := newWriter(t, writerOpts(t, name))
+	pushN(t, w, 300)
+	setCounter(t, name, name+"_slow", 100, 100)
+
+	a := cleanArchiver(t, name, 10)
+	if err := a.clean(); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+
+	st := a.CleanStats()
+	if st.HeadFID != 300 {
+		t.Fatalf("HeadFID=%d, ожидали 300", st.HeadFID)
+	}
+	if st.SlowestReader != name+"_slow" {
+		t.Fatalf("самым медленным назван %q", st.SlowestReader)
+	}
+	if st.ReaderLag() != 200 {
+		t.Fatalf("отставание %d, ожидали 200", st.ReaderLag())
 	}
 }

@@ -6,6 +6,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -127,6 +128,47 @@ type ArchiverOptions struct {
 	MaxSize    int
 	MaxCount   int
 	OuterCount int
+
+	// CleanGapFID — зазор в блобах, который чистка оставляет позади самого
+	// отставшего потребителя очереди. Удаляется всё ниже (минимальный fid
+	// счётчиков − CleanGapFID), но не выше заархивированного в B2.
+	// Ноль выключает чистку.
+	CleanGapFID uint64
+	// CleanInterval — как часто проверять, есть ли что удалять.
+	CleanInterval time.Duration
+	// CleanBatch — сколько строк удалять одним DELETE, чтобы не держать
+	// длинную транзакцию на большой таблице.
+	CleanBatch int
+}
+
+// CleanStats — снимок состояния чистки на последнем проходе. Нужен, чтобы
+// вешать алерты на отставание потребителей: чистка сама по себе молча стоит,
+// если кто-то встал.
+type CleanStats struct {
+	// SlowestReader — имя самого отставшего потребителя очереди
+	SlowestReader string
+	// SlowestReaderFID — его позиция в блобах таблицы
+	SlowestReaderFID uint64
+	// HeadFID — последний записанный блоб
+	HeadFID uint64
+	// ArchivedFID — докуда таблица целиком уехала в B2
+	ArchivedFID uint64
+	// LastDeletedFID — граница последнего удаления
+	LastDeletedFID uint64
+	// DeletedRows — сколько строк удалено с момента запуска
+	DeletedRows int64
+	// LastRun — когда последний раз отрабатывал проход
+	LastRun time.Time
+	// NoReaders — очередь никто не читает, чистка не рискует удалять
+	NoReaders bool
+}
+
+// ReaderLag — на сколько блобов самый медленный потребитель отстал от головы.
+func (s CleanStats) ReaderLag() uint64 {
+	if s.HeadFID < s.SlowestReaderFID {
+		return 0
+	}
+	return s.HeadFID - s.SlowestReaderFID
 }
 
 type B2Options struct {

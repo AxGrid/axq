@@ -22,7 +22,6 @@ type B2ReaderService struct {
 	logger       zerolog.Logger
 	ctx          context.Context
 	cancelFunc   context.CancelFunc
-	counters     *CounterService
 	db           *gorm.DB
 	blobListChan chan *protobuf.BlobMessageList
 	outChan      chan domain.Message
@@ -68,11 +67,10 @@ func NewB2ReaderService(opts domain.B2ReaderOptions) (*B2ReaderService, error) {
 		return nil, err
 	}
 
-	b2r.counters, err = NewCounterService(opts.Name, opts.ReaderName, opts.CTX, opts.Logger, b2r.db, false, false, false)
-	if err != nil {
-		return nil, err
-	}
-
+	// Счётчика у b2-ридера нет намеренно: позицию он берёт из opts.LastId, а
+	// строка в axq_counters только мешала бы — чистка таблицы очереди считает
+	// по ней самого отставшего потребителя, и вечно нулевая строка от читателя
+	// архива заблокировала бы удаление навсегда.
 	if opts.LastId != nil {
 		b2r.lastId = opts.LastId.LastId
 	}
@@ -236,7 +234,6 @@ func (r *B2ReaderService) outer(index int) {
 					break
 				}
 			}
-			//r.counters.Set(m.Id)
 		}
 	}
 }

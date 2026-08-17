@@ -492,6 +492,10 @@ func (b *messageHolder) Id() uint64 {
 	return b.id
 }
 
+func (b *messageHolder) Fid() uint64 {
+	return b.fid
+}
+
 func (b *messageHolder) Message() []byte {
 	return b.message
 }

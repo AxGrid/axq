@@ -430,3 +430,44 @@ func TestReader_CancelStopsGoroutines(t *testing.T) {
 		t.Fatalf("после отмены осталось %d горутин против %d до старта ридера", after, before)
 	}
 }
+
+// Сообщение обязано знать, из какого блоба БД оно приехало: на этом строится
+// вычисление границы «заархивировано целиком» без лишних запросов в базу.
+func TestReader_MessageKnowsItsBlobFID(t *testing.T) {
+	name := testQueue(t)
+	wopts := writerOpts(t, name)
+	wopts.MaxBlobSize = 50
+	w := newWriter(t, wopts)
+	const n = 300
+	pushConcurrent(t, w, n, 32)
+
+	// раскладка сообщений по блобам — эталон, с которым сверяемся
+	blobOf := make(map[uint64]uint64, n)
+	for _, b := range blobsOf(t, name) {
+		for id := b.FromId; id <= b.ToId; id++ {
+			blobOf[id] = b.FID
+		}
+	}
+
+	r := newReader(t, readerOpts(t, name))
+	var prevFid uint64
+	for i := 0; i < n; i++ {
+		select {
+		case m := <-r.C():
+			want, ok := blobOf[m.Id()]
+			if !ok {
+				t.Fatalf("сообщение id=%d не найдено ни в одном блобе", m.Id())
+			}
+			if m.Fid() != want {
+				t.Fatalf("сообщение id=%d сообщает fid=%d, а лежит в блобе %d", m.Id(), m.Fid(), want)
+			}
+			if m.Fid() < prevFid {
+				t.Fatalf("fid поехал назад: %d после %d", m.Fid(), prevFid)
+			}
+			prevFid = m.Fid()
+			m.Done()
+		case <-time.After(30 * time.Second):
+			t.Fatalf("не дождались сообщения %d", i)
+		}
+	}
+}
